@@ -50,6 +50,51 @@ void main() {
     });
   });
 
+  group('PageLayouts.verticalSpreads', () {
+    test('pairs pages side by side and stacks the spreads', () {
+      final result = PageLayouts.verticalSpreads(
+        const [Size(100, 200), Size(100, 200), Size(100, 200), Size(100, 200)],
+        10,
+      );
+
+      // First spread: two columns of 100 separated by the 10pt margin.
+      expect(result.pageRects[0], const Rect.fromLTWH(10, 10, 100, 200));
+      expect(result.pageRects[1], const Rect.fromLTWH(120, 10, 100, 200));
+      // Second spread sits below the first.
+      expect(result.pageRects[2], const Rect.fromLTWH(10, 220, 100, 200));
+      expect(result.pageRects[3], const Rect.fromLTWH(120, 220, 100, 200));
+      expect(result.documentSize, const Size(230, 430));
+    });
+
+    test('leaves an odd final page alone in the left column', () {
+      final result = PageLayouts.verticalSpreads(
+        const [Size(100, 200), Size(100, 200), Size(100, 200)],
+        10,
+      );
+
+      expect(result.pageRects, hasLength(3));
+      expect(result.pageRects[2], const Rect.fromLTWH(10, 220, 100, 200));
+      // The document is still two columns wide, so spreads stay aligned.
+      expect(result.documentSize, const Size(230, 430));
+    });
+
+    test('centres pages of differing size within their row and column', () {
+      final result = PageLayouts.verticalSpreads(const [Size(200, 100), Size(100, 50)], 0);
+
+      expect(result.pageRects[0], const Rect.fromLTWH(0, 0, 200, 100));
+      // Narrower and shorter page: centred in its 200-wide column and in the
+      // 100-tall row.
+      expect(result.pageRects[1], const Rect.fromLTWH(250, 25, 100, 50));
+    });
+
+    test('handles an empty document', () {
+      final result = PageLayouts.verticalSpreads(const [], 8);
+
+      expect(result.pageRects, isEmpty);
+      expect(result.documentSize, Size.zero);
+    });
+  });
+
   group('PageLayouts.pageNumberForOffset', () {
     final rects = PageLayouts.horizontalPaged(
       const [Size(100, 100), Size(100, 100), Size(100, 100)],

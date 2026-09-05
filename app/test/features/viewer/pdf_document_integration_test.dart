@@ -12,10 +12,13 @@ import 'package:the_pdf_project/features/viewer/model/reading_mode.dart';
 /// disk, read its structure and pull text out of it — the same path the viewer
 /// uses for rendering, the outline panel and in-document search.
 ///
-/// Regenerate the fixture with:
+/// Regenerate the fixtures with:
 ///   dart run tool/generate_fixture_pdf.dart test/fixtures/sample.pdf
+///   dart run tool/generate_encrypted_fixture_pdf.dart test/fixtures/encrypted.pdf
 void main() {
   const fixture = 'test/fixtures/sample.pdf';
+  const encryptedFixture = 'test/fixtures/encrypted.pdf';
+  const encryptedPassword = 'letmein';
 
   setUpAll(() async {
     TestWidgetsFlutterBinding.ensureInitialized();
@@ -53,6 +56,45 @@ void main() {
     expect(await document.loadOutline(), isEmpty);
   });
 
+  group('password-protected documents', () {
+    test('open once the right password is supplied', () async {
+      final document = await PdfDocument.openFile(
+        encryptedFixture,
+        passwordProvider: () => encryptedPassword,
+      );
+      addTearDown(document.dispose);
+
+      expect(document.isEncrypted, isTrue);
+      expect(document.pages, hasLength(1));
+      expect((await document.pages.first.loadStructuredText()).fullText, contains('Locked'));
+    });
+
+    test('report a password error when the reader gives up', () async {
+      await expectLater(
+        PdfDocument.openFile(encryptedFixture, passwordProvider: () => null),
+        throwsA(isA<PdfPasswordException>()),
+      );
+    });
+
+    test('keep asking until the provider returns the right password', () async {
+      final attempts = <String?>[];
+      final passwords = <String?>['wrong', 'alsowrong', encryptedPassword];
+
+      final document = await PdfDocument.openFile(
+        encryptedFixture,
+        passwordProvider: () {
+          final next = passwords.removeAt(0);
+          attempts.add(next);
+          return next;
+        },
+      );
+      addTearDown(document.dispose);
+
+      expect(attempts, ['wrong', 'alsowrong', encryptedPassword]);
+      expect(document.pages, hasLength(1));
+    });
+  });
+
   test('lays real pages out differently per reading mode', () async {
     final document = await PdfDocument.openFile(fixture);
     addTearDown(document.dispose);
@@ -64,9 +106,16 @@ void main() {
       params,
     );
     final single = PdfrxLayoutAdapter.layout(ReadingMode.singlePage, document.pages, params);
+    final spread = PdfrxLayoutAdapter.layout(ReadingMode.twoPageSpread, document.pages, params);
 
     expect(continuous.pageLayouts, hasLength(3));
     expect(single.pageLayouts, hasLength(3));
+    expect(spread.pageLayouts, hasLength(3));
+    // Spreads put pages 1 and 2 on the same row and push page 3 to the next.
+    expect(spread.pageLayouts[1].top, spread.pageLayouts[0].top);
+    expect(spread.pageLayouts[1].left, greaterThan(spread.pageLayouts[0].left));
+    expect(spread.pageLayouts[2].top, greaterThan(spread.pageLayouts[1].top));
+    expect(spread.pageLayouts[2].left, spread.pageLayouts[0].left);
     // Continuous stacks downwards; single page runs left to right.
     expect(continuous.pageLayouts[1].top, greaterThan(continuous.pageLayouts[0].top));
     expect(continuous.pageLayouts[1].left, continuous.pageLayouts[0].left);

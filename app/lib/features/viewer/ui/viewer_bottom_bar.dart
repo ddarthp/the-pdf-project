@@ -15,6 +15,7 @@ class ViewerBottomBar extends StatelessWidget {
     required this.onZoomIn,
     required this.onZoomOut,
     required this.onFitWidth,
+    required this.onFitHeight,
     required this.onFitPage,
     super.key,
   });
@@ -29,6 +30,7 @@ class ViewerBottomBar extends StatelessWidget {
   final VoidCallback onZoomIn;
   final VoidCallback onZoomOut;
   final VoidCallback onFitWidth;
+  final VoidCallback onFitHeight;
   final VoidCallback onFitPage;
 
   @override
@@ -78,6 +80,11 @@ class ViewerBottomBar extends StatelessWidget {
               tooltip: 'Fit width',
               onPressed: onFitWidth,
               icon: const Icon(Icons.swap_horiz),
+            ),
+            IconButton(
+              tooltip: 'Fit height',
+              onPressed: onFitHeight,
+              icon: const Icon(Icons.swap_vert),
             ),
             IconButton(
               tooltip: 'Fit page',

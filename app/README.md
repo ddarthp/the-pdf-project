@@ -14,6 +14,7 @@ T0 viewer.
 | PDF rendering / text / outline | `pdfrx` (PDFium) |
 | PDF generation (test fixtures) | `pdf` |
 | Document picking | `file_picker` |
+| Preferences (last page read) | `shared_preferences` |
 | Paths | `path_provider` |
 
 ## Layout
@@ -44,9 +45,15 @@ flutter run                          # needs a connected iOS/Android device
 
 ## Test fixtures
 
-`test/fixtures/sample.pdf` is a generated three-page document. Regenerate it
-with:
+Both fixtures are generated and byte-for-byte reproducible, so regenerating
+them does not churn the repository.
+
+| Fixture | What it is |
+|---|---|
+| `test/fixtures/sample.pdf` | Three plain pages with searchable text |
+| `test/fixtures/encrypted.pdf` | One page, standard security R3 (128-bit RC4), user password `letmein` |
 
 ```sh
 dart run tool/generate_fixture_pdf.dart test/fixtures/sample.pdf
+dart run tool/generate_encrypted_fixture_pdf.dart test/fixtures/encrypted.pdf
 ```

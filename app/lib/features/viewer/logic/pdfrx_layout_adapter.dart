@@ -12,6 +12,7 @@ abstract final class PdfrxLayoutAdapter {
     final result = switch (mode) {
       ReadingMode.continuousScroll => PageLayouts.vertical(sizes, params.margin),
       ReadingMode.singlePage => PageLayouts.horizontalPaged(sizes, params.margin),
+      ReadingMode.twoPageSpread => PageLayouts.verticalSpreads(sizes, params.margin),
     };
     return PdfPageLayout(pageLayouts: result.pageRects, documentSize: result.documentSize);
   }
@@ -24,6 +25,7 @@ abstract final class PdfrxLayoutAdapter {
   static PdfPageLayoutFunction functionFor(ReadingMode mode) => switch (mode) {
     ReadingMode.continuousScroll => _layoutContinuous,
     ReadingMode.singlePage => _layoutSinglePage,
+    ReadingMode.twoPageSpread => _layoutTwoPageSpread,
   };
 
   static PdfPageLayout _layoutContinuous(List<PdfPage> pages, PdfViewerParams params) =>
@@ -31,4 +33,7 @@ abstract final class PdfrxLayoutAdapter {
 
   static PdfPageLayout _layoutSinglePage(List<PdfPage> pages, PdfViewerParams params) =>
       layout(ReadingMode.singlePage, pages, params);
+
+  static PdfPageLayout _layoutTwoPageSpread(List<PdfPage> pages, PdfViewerParams params) =>
+      layout(ReadingMode.twoPageSpread, pages, params);
 }

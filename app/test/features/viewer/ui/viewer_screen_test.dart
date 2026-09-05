@@ -4,6 +4,7 @@ import 'package:the_pdf_project/app.dart';
 import 'package:the_pdf_project/core/view_preferences.dart';
 import 'package:the_pdf_project/features/viewer/model/pdf_source.dart';
 import 'package:the_pdf_project/features/viewer/model/reading_mode.dart';
+import 'package:the_pdf_project/features/viewer/model/view_rotation.dart';
 import 'package:the_pdf_project/features/viewer/services/pdf_picker.dart';
 import 'package:the_pdf_project/features/viewer/ui/empty_state.dart';
 import 'package:the_pdf_project/features/viewer/ui/viewer_screen.dart';
@@ -57,16 +58,36 @@ void main() {
     expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Open PDF')).onPressed, isNotNull);
   });
 
-  testWidgets('the view menu switches reading mode', (tester) async {
+  for (final mode in ReadingMode.values) {
+    testWidgets('the view menu selects ${mode.label}', (tester) async {
+      final preferences = ViewPreferences();
+      await tester.pumpWidget(_wrap(preferences, const _FakePdfPicker([])));
+
+      await tester.tap(find.byIcon(Icons.tune));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(mode.label));
+      await tester.pumpAndSettle();
+
+      expect(preferences.readingMode, mode);
+    });
+  }
+
+  testWidgets('the view menu rotates the view a quarter turn at a time', (tester) async {
     final preferences = ViewPreferences();
     await tester.pumpWidget(_wrap(preferences, const _FakePdfPicker([])));
 
     await tester.tap(find.byIcon(Icons.tune));
     await tester.pumpAndSettle();
-    await tester.tap(find.text(ReadingMode.singlePage.label));
+    expect(find.text('Rotate view (0°)'), findsOneWidget);
+    await tester.tap(find.text('Rotate view (0°)'));
     await tester.pumpAndSettle();
 
-    expect(preferences.readingMode, ReadingMode.singlePage);
+    expect(preferences.viewRotation, ViewRotation.clockwise90);
+
+    // The menu label reflects the current angle next time it is opened.
+    await tester.tap(find.byIcon(Icons.tune));
+    await tester.pumpAndSettle();
+    expect(find.text('Rotate view (90°)'), findsOneWidget);
   });
 
   testWidgets('the view menu toggles night mode', (tester) async {

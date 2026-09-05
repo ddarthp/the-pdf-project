@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../features/viewer/model/reading_mode.dart';
+import '../features/viewer/model/view_rotation.dart';
 
 /// App-wide, in-memory view preferences.
 ///
@@ -9,11 +10,15 @@ import '../features/viewer/model/reading_mode.dart';
 class ViewPreferences extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.system;
   ReadingMode _readingMode = ReadingMode.continuousScroll;
+  ViewRotation _viewRotation = ViewRotation.none;
   bool _invertPages = false;
 
   ThemeMode get themeMode => _themeMode;
 
   ReadingMode get readingMode => _readingMode;
+
+  /// Rotation applied to the presentation only; the document is untouched.
+  ViewRotation get viewRotation => _viewRotation;
 
   /// Renders page content inverted (white-on-black) without touching the
   /// app chrome — a true "night mode" for the document itself.
@@ -31,11 +36,20 @@ class ViewPreferences extends ChangeNotifier {
     notifyListeners();
   }
 
+  set viewRotation(ViewRotation value) {
+    if (_viewRotation == value) return;
+    _viewRotation = value;
+    notifyListeners();
+  }
+
   set invertPages(bool value) {
     if (_invertPages == value) return;
     _invertPages = value;
     notifyListeners();
   }
+
+  /// Steps the view 90° clockwise, wrapping back to upright.
+  void rotateClockwise() => viewRotation = _viewRotation.next;
 
   /// Cycles system → light → dark → system.
   void cycleThemeMode() {

@@ -8,10 +8,13 @@ import '../logic/page_navigation.dart';
 import '../logic/pdfrx_layout_adapter.dart';
 import '../model/pdf_source.dart';
 import '../model/reading_mode.dart';
+import '../services/last_page_store.dart';
 import '../services/pdf_picker.dart';
 import 'empty_state.dart';
 import 'jump_to_page_dialog.dart';
+import 'load_error_banner.dart';
 import 'outline_panel.dart';
+import 'password_dialog.dart';
 import 'search_bar_panel.dart';
 import 'thumbnail_panel.dart';
 import 'viewer_bottom_bar.dart';
@@ -19,12 +22,20 @@ import 'viewer_bottom_bar.dart';
 /// The PDF reader: opens a document from the system picker and renders it with
 /// navigation, outline, thumbnails and in-document search.
 class ViewerScreen extends StatefulWidget {
-  const ViewerScreen({required this.preferences, this.picker = const PdfPicker(), super.key});
+  const ViewerScreen({
+    required this.preferences,
+    this.picker = const PdfPicker(),
+    this.lastPageStore,
+    super.key,
+  });
 
   final ViewPreferences preferences;
 
   /// Injected so widget tests can drive the screen without a native picker.
   final PdfPicker picker;
+
+  /// Defaults to the on-device shared-preferences store.
+  final LastPageStore? lastPageStore;
 
   @override
   State<ViewerScreen> createState() => _ViewerScreenState();
@@ -35,6 +46,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
   final _searchTextController = TextEditingController();
   final _scaffoldKey = GlobalKey<ScaffoldState>();
 
+  late final LastPageStore _lastPageStore =
+      widget.lastPageStore ?? SharedPreferencesLastPageStore();
+
   /// Null until a document is loaded.
   ///
   /// [PdfTextSearcher] subscribes to the controller's document the moment it is
@@ -43,8 +57,15 @@ class _ViewerScreenState extends State<ViewerScreen> {
   PdfTextSearcher? _searcher;
 
   PdfSource? _source;
+
+  /// Built once per opened document so the password provider and the reload
+  /// handle both survive rebuilds.
+  PdfDocumentRef? _documentRef;
+
   PdfDocument? _document;
   int _pageNumber = 1;
+  int _initialPageNumber = 1;
+  int _passwordAttempts = 0;
   bool _isOpening = false;
   bool _isSearchVisible = false;
   late ReadingMode _readingMode = widget.preferences.readingMode;
@@ -101,14 +122,19 @@ class _ViewerScreenState extends State<ViewerScreen> {
     try {
       final source = await widget.picker.pickPdf();
       if (!mounted || source == null) return;
+      final resumePage = await _lastPageStore.lastPage(source.key);
+      if (!mounted) return;
       // Drop the previous document's searcher immediately: it is bound to a
       // document that is about to go away. onViewerReady builds a new one.
       _closeSearch();
       _disposeSearcher();
       setState(() {
         _source = source;
+        _documentRef = _createDocumentRef(source);
         _document = null;
-        _pageNumber = 1;
+        _passwordAttempts = 0;
+        _initialPageNumber = resumePage ?? 1;
+        _pageNumber = _initialPageNumber;
       });
     } on Object catch (error) {
       if (!mounted) return;
@@ -116,6 +142,40 @@ class _ViewerScreenState extends State<ViewerScreen> {
     } finally {
       if (mounted) setState(() => _isOpening = false);
     }
+  }
+
+  PdfDocumentRef _createDocumentRef(PdfSource source) {
+    Future<String?> askForPassword() => _requestPassword(source);
+    return switch (source) {
+      PdfFileSource(:final path) => PdfDocumentRefFile(path, passwordProvider: askForPassword),
+      PdfDataSource(:final bytes, :final sourceId) => PdfDocumentRefData(
+        bytes,
+        sourceName: sourceId,
+        passwordProvider: askForPassword,
+      ),
+    };
+  }
+
+  /// Called by pdfrx whenever PDFium rejects the password it was given.
+  ///
+  /// Returning null tells pdfrx to stop asking and report a load error, which
+  /// [LoadErrorBanner] turns into a way back in.
+  Future<String?> _requestPassword(PdfSource source) async {
+    if (!mounted) return null;
+    final isRetry = _passwordAttempts > 0;
+    _passwordAttempts++;
+    return showPdfPasswordDialog(
+      context,
+      fileName: source.displayName,
+      isRetry: isRetry,
+    );
+  }
+
+  /// Retries a document that failed to load — most often because its password
+  /// was wrong or the prompt was dismissed.
+  void _retryLoad() {
+    _passwordAttempts = 0;
+    _documentRef?.resolveListenable().load(forceReload: true);
   }
 
   void _showMessage(String message) {
@@ -139,16 +199,23 @@ class _ViewerScreenState extends State<ViewerScreen> {
     if (page != null) _goToPage(page);
   }
 
+  void _goTo(Matrix4? matrix) {
+    if (matrix != null) _controller.goTo(matrix);
+  }
+
   void _fitWidth() {
     if (!_controller.isReady) return;
-    final matrix = _controller.calcMatrixFitWidthForPage(pageNumber: _pageNumber);
-    if (matrix != null) _controller.goTo(matrix);
+    _goTo(_controller.calcMatrixFitWidthForPage(pageNumber: _pageNumber));
+  }
+
+  void _fitHeight() {
+    if (!_controller.isReady) return;
+    _goTo(_controller.calcMatrixFitHeightForPage(pageNumber: _pageNumber));
   }
 
   void _fitPage() {
     if (!_controller.isReady) return;
-    final matrix = _controller.calcMatrixForFit(pageNumber: _pageNumber);
-    if (matrix != null) _controller.goTo(matrix);
+    _goTo(_controller.calcMatrixForFit(pageNumber: _pageNumber));
   }
 
   /// In single-page mode a drag should land on a page, not between two.
@@ -217,6 +284,11 @@ class _ViewerScreenState extends State<ViewerScreen> {
         if (widget.preferences.invertPages) _paintNightMode,
         if (_searcher != null) _searcher!.pageTextMatchPaintCallback,
       ],
+      errorBannerBuilder: (context, error, stackTrace, documentRef) => LoadErrorBanner(
+        error: error,
+        onRetry: _retryLoad,
+        onOpenAnother: _openPdf,
+      ),
       onViewerReady: (document, controller) {
         if (!mounted) return;
         _disposeSearcher();
@@ -229,33 +301,40 @@ class _ViewerScreenState extends State<ViewerScreen> {
       onPageChanged: (pageNumber) {
         if (!mounted || pageNumber == null) return;
         setState(() => _pageNumber = pageNumber);
+        _rememberCurrentPage();
       },
     );
   }
 
-  Widget _buildViewer(PdfSource source) {
-    final params = _buildParams(context);
-    final key = ValueKey(source.key);
-    return switch (source) {
-      PdfFileSource(:final path) => PdfViewer.file(
-        path,
-        key: key,
+  void _rememberCurrentPage() {
+    final source = _source;
+    if (source == null || _document == null) return;
+    _lastPageStore.saveLastPage(source.key, _pageNumber);
+  }
+
+  Widget _buildViewer(PdfDocumentRef documentRef) {
+    final rotation = widget.preferences.viewRotation;
+    // pdfrx has no view-rotation parameter (only per-page `rotationOverride`
+    // on PdfPageView), so rotate the whole viewer instead. RotatedBox hands
+    // the viewer a viewport with width and height swapped and rotates its hit
+    // testing with it, which is exactly the semantics of a rotated view — and
+    // it leaves the document itself untouched.
+    return RotatedBox(
+      quarterTurns: rotation.quarterTurns,
+      child: PdfViewer(
+        documentRef,
+        key: ValueKey(documentRef.key),
         controller: _controller,
-        params: params,
+        params: _buildParams(context),
+        initialPageNumber: _initialPageNumber,
       ),
-      PdfDataSource(:final bytes, :final sourceId) => PdfViewer.data(
-        bytes,
-        key: key,
-        sourceName: sourceId,
-        controller: _controller,
-        params: params,
-      ),
-    };
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     final source = _source;
+    final documentRef = _documentRef;
     final document = _document;
     final preferences = widget.preferences;
 
@@ -296,9 +375,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
             : null,
       ),
       drawer: document == null ? null : _buildSidePanel(document),
-      body: source == null
+      body: documentRef == null
           ? ViewerEmptyState(onOpenPressed: _openPdf, isOpening: _isOpening)
-          : _buildViewer(source),
+          : _buildViewer(documentRef),
       bottomNavigationBar: document == null
           ? null
           : ViewerBottomBar(
@@ -312,6 +391,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
               onZoomIn: () => _controller.zoomUp(),
               onZoomOut: () => _controller.zoomDown(),
               onFitWidth: _fitWidth,
+              onFitHeight: _fitHeight,
               onFitPage: _fitPage,
             ),
     );
@@ -324,9 +404,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
         child: Column(
           children: [
             const SizedBox(height: 8),
-            SafeArea(
+            const SafeArea(
               bottom: false,
-              child: const TabBar(
+              child: TabBar(
                 tabs: [
                   Tab(icon: Icon(Icons.grid_view), text: 'Pages'),
                   Tab(icon: Icon(Icons.list), text: 'Outline'),
@@ -361,7 +441,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 }
 
-/// Reading mode, night mode and app theme, grouped in one overflow menu.
+/// Reading mode, rotation, night mode and app theme, in one overflow menu.
 class _ViewMenu extends StatelessWidget {
   const _ViewMenu({required this.preferences});
 
@@ -377,48 +457,33 @@ class _ViewMenu extends StatelessWidget {
         for (final mode in ReadingMode.values)
           PopupMenuItem<void>(
             onTap: () => preferences.readingMode = mode,
-            child: Row(
-              children: [
-                Icon(
-                  preferences.readingMode == mode
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  size: 18,
-                ),
-                const SizedBox(width: 12),
-                Flexible(child: Text(mode.label, overflow: TextOverflow.ellipsis)),
-              ],
+            child: _MenuRow(
+              icon: preferences.readingMode == mode
+                  ? Icons.radio_button_checked
+                  : Icons.radio_button_unchecked,
+              label: mode.label,
             ),
           ),
         const PopupMenuDivider(),
         PopupMenuItem<void>(
+          onTap: preferences.rotateClockwise,
+          child: _MenuRow(
+            icon: Icons.rotate_90_degrees_cw_outlined,
+            label: 'Rotate view (${preferences.viewRotation.label})',
+          ),
+        ),
+        PopupMenuItem<void>(
           onTap: () => preferences.invertPages = !preferences.invertPages,
-          child: Row(
-            children: [
-              Icon(
-                preferences.invertPages ? Icons.check_box : Icons.check_box_outline_blank,
-                size: 18,
-              ),
-              const SizedBox(width: 12),
-              const Flexible(
-                child: Text('Night mode (invert pages)', overflow: TextOverflow.ellipsis),
-              ),
-            ],
+          child: _MenuRow(
+            icon: preferences.invertPages ? Icons.check_box : Icons.check_box_outline_blank,
+            label: 'Night mode (invert pages)',
           ),
         ),
         PopupMenuItem<void>(
           onTap: preferences.cycleThemeMode,
-          child: Row(
-            children: [
-              const Icon(Icons.brightness_6_outlined, size: 18),
-              const SizedBox(width: 12),
-              Flexible(
-                child: Text(
-                  'Theme: ${_themeLabel(preferences.themeMode)}',
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
+          child: _MenuRow(
+            icon: Icons.brightness_6_outlined,
+            label: 'Theme: ${_themeLabel(preferences.themeMode)}',
           ),
         ),
       ],
@@ -430,4 +495,22 @@ class _ViewMenu extends StatelessWidget {
     ThemeMode.light => 'Light',
     ThemeMode.dark => 'Dark',
   };
+}
+
+class _MenuRow extends StatelessWidget {
+  const _MenuRow({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Icon(icon, size: 18),
+        const SizedBox(width: 12),
+        Flexible(child: Text(label, overflow: TextOverflow.ellipsis)),
+      ],
+    );
+  }
 }

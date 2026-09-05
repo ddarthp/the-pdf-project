@@ -61,6 +61,44 @@ abstract final class PageLayouts {
     );
   }
 
+  /// Two-page spread: facing pages side by side, spreads stacked downwards.
+  ///
+  /// Columns are the width of the widest page in the document so spreads line
+  /// up with each other; an odd final page sits alone in the left column.
+  static PageLayoutResult verticalSpreads(List<Size> pageSizes, double margin) {
+    if (pageSizes.isEmpty) return PageLayoutResult(pageRects: const [], documentSize: Size.zero);
+
+    final columnWidth = pageSizes.fold(0.0, (acc, s) => math.max(acc, s.width));
+    final spreadWidth = columnWidth * 2 + margin;
+    final rects = List<Rect>.filled(pageSizes.length, Rect.zero);
+    var y = margin;
+    for (var i = 0; i < pageSizes.length; i += 2) {
+      final left = pageSizes[i];
+      final right = i + 1 < pageSizes.length ? pageSizes[i + 1] : null;
+      final rowHeight = right == null ? left.height : math.max(left.height, right.height);
+
+      rects[i] = Rect.fromLTWH(
+        margin + (columnWidth - left.width) / 2,
+        y + (rowHeight - left.height) / 2,
+        left.width,
+        left.height,
+      );
+      if (right != null) {
+        rects[i + 1] = Rect.fromLTWH(
+          margin + columnWidth + margin + (columnWidth - right.width) / 2,
+          y + (rowHeight - right.height) / 2,
+          right.width,
+          right.height,
+        );
+      }
+      y += rowHeight + margin;
+    }
+    return PageLayoutResult(
+      pageRects: rects,
+      documentSize: Size(spreadWidth + margin * 2, y),
+    );
+  }
+
   /// Page number (1-based) whose slot is closest to [centerX], for the
   /// horizontally paged layout produced by [horizontalPaged].
   static int pageNumberForOffset({
