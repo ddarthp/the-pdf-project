@@ -44,6 +44,11 @@ lib/
     logic/                     cropping a drawing, placing it on a page
     model/                     drawn, typed and image signatures
     ui/                        the signature pad
+  features/forms/
+    logic/                     what changed, what a field will accept
+    model/                     fields, their kinds and their controls
+    services/                  PDFium form reading and filling
+    ui/                        the form filler and its per-kind editors
 ```
 
 Each feature's `logic/` deliberately has no pdfrx imports so the maths is
@@ -72,6 +77,12 @@ A signature is captured in `features/signature/` and then placed as a
 `SignatureAnnotation`, so it inherits the annotation feature's placement,
 selection, moving, resizing and export rather than repeating any of it.
 
+Form filling goes through PDFium's form API rather than writing values into
+the document by hand: the app focuses a field and types into it, clicks a tick
+box, chooses an option — so PDFium redraws each field itself. Every
+interaction is followed by dropping focus, because PDFium keeps an edit in the
+focused widget until focus moves on.
+
 ## Commands
 
 ```sh
@@ -91,8 +102,10 @@ them does not churn the repository.
 |---|---|
 | `test/fixtures/sample.pdf` | Three plain pages with searchable text |
 | `test/fixtures/encrypted.pdf` | One page, standard security R3 (128-bit RC4), user password `letmein` |
+| `test/fixtures/form.pdf` | An AcroForm with a text field, a tick box, a two-button radio group and a dropdown |
 
 ```sh
 dart run tool/generate_fixture_pdf.dart test/fixtures/sample.pdf
 dart run tool/generate_encrypted_fixture_pdf.dart test/fixtures/encrypted.pdf
+dart run tool/generate_form_fixture_pdf.dart test/fixtures/form.pdf
 ```

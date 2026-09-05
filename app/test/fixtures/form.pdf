@@ -1,0 +1,83 @@
+%PDF-1.7
+%âãÏÓ
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [5 0 R 6 0 R 7 0 R 10 0 R] /DA (/Helv 0 Tf 0 g) /DR << /Font << /Helv 4 0 R /ZaDb 11 0 R >> >> >> >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 4 0 R >> >> /Contents 12 0 R /Annots [5 0 R 6 0 R 8 0 R 9 0 R 10 0 R] >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Tx /T (full_name) /V () /DA (/Helv 12 Tf 0 g) /Rect [72 700 372 724] /F 4 /P 3 0 R >>
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Btn /T (subscribe) /V /Off /AS /Off /AP << /N << /Off 13 0 R /Yes 14 0 R >> >> /DA (/ZaDb 0 Tf 0 g) /Rect [72 660 90 678] /F 4 /P 3 0 R >>
+endobj
+7 0 obj
+<< /FT /Btn /Ff 32768 /T (plan) /V /Off /Kids [8 0 R 9 0 R] >>
+endobj
+8 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 7 0 R /AS /Off /AP << /N << /Off 13 0 R /Basic 14 0 R >> >> /Rect [72 620 90 638] /F 4 /P 3 0 R >>
+endobj
+9 0 obj
+<< /Type /Annot /Subtype /Widget /Parent 7 0 R /AS /Off /AP << /N << /Off 13 0 R /Pro 14 0 R >> >> /Rect [132 620 150 638] /F 4 /P 3 0 R >>
+endobj
+10 0 obj
+<< /Type /Annot /Subtype /Widget /FT /Ch /Ff 131072 /T (country) /V () /Opt [(United Kingdom) (Germany) (Japan)] /DA (/Helv 12 Tf 0 g) /Rect [72 570 272 594] /F 4 /P 3 0 R >>
+endobj
+11 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /ZapfDingbats >>
+endobj
+12 0 obj
+<< /Length 252 >>
+stream
+BT /F1 18 Tf 72 780 Td (Membership form) Tj ET
+BT /F1 11 Tf 72 730 Td (Full name) Tj ET
+BT /F1 11 Tf 96 664 Td (Subscribe to updates) Tj ET
+BT /F1 11 Tf 96 624 Td (Basic) Tj ET
+BT /F1 11 Tf 156 624 Td (Pro) Tj ET
+BT /F1 11 Tf 72 610 Td (Country) Tj ET
+
+endstream
+endobj
+13 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 18 18] /Resources << >> /Length 30 >>
+stream
+0.5 w 0 0 0 RG 1 1 16 16 re S
+
+endstream
+endobj
+14 0 obj
+<< /Type /XObject /Subtype /Form /BBox [0 0 18 18] /Resources << >> /Length 52 >>
+stream
+0.5 w 0 0 0 RG 1 1 16 16 re S 0 0 0 rg 5 5 8 8 re f
+
+endstream
+endobj
+xref
+0 15
+0000000000 65535 f 
+0000000015 00000 n 
+0000000183 00000 n 
+0000000240 00000 n 
+0000000408 00000 n 
+0000000505 00000 n 
+0000000644 00000 n 
+0000000836 00000 n 
+0000000914 00000 n 
+0000001069 00000 n 
+0000001224 00000 n 
+0000001415 00000 n 
+0000001489 00000 n 
+0000001793 00000 n 
+0000001939 00000 n 
+trailer
+<< /Size 15 /Root 1 0 R >>
+startxref
+2107
+%%EOF

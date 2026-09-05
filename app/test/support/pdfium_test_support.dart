@@ -7,6 +7,7 @@ import 'package:pdfrx/pdfrx.dart';
 const sampleFixture = 'test/fixtures/sample.pdf';
 const encryptedFixture = 'test/fixtures/encrypted.pdf';
 const encryptedPassword = 'letmein';
+const formFixture = 'test/fixtures/form.pdf';
 
 /// Initialises PDFium for a widget test suite.
 ///

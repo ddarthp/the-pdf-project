@@ -13,11 +13,13 @@ import '../../annotate/ui/annotation_layer.dart';
 import '../../annotate/ui/annotation_text_dialog.dart';
 import '../../annotate/ui/annotation_toolbar.dart';
 import '../../annotate/ui/annotations_panel.dart';
+import '../../forms/services/pdf_form_service.dart';
+import '../../forms/ui/form_fill_screen.dart';
 import '../../pages/services/pdf_saver.dart';
+import '../../pages/ui/page_organizer_screen.dart';
 import '../../signature/model/signature_source.dart';
 import '../../signature/ui/signature_image_picker.dart';
 import '../../signature/ui/signature_pad_sheet.dart';
-import '../../pages/ui/page_organizer_screen.dart';
 import '../logic/page_layout.dart';
 import '../logic/page_navigation.dart';
 import '../logic/pdfrx_layout_adapter.dart';
@@ -45,6 +47,7 @@ class ViewerScreen extends StatefulWidget {
     this.saver = const PdfSaver(),
     this.annotationWriter = const PdfAnnotationWriter(),
     this.signatureImagePicker = const SignatureImagePicker(),
+    this.formService = const PdfFormService(),
     super.key,
   });
 
@@ -67,6 +70,9 @@ class ViewerScreen extends StatefulWidget {
 
   /// Picks a photo or scan of a signature.
   final SignatureImagePicker signatureImagePicker;
+
+  /// Reads and fills the document's form fields.
+  final PdfFormService formService;
 
   @override
   State<ViewerScreen> createState() => _ViewerScreenState();
@@ -230,6 +236,29 @@ class _ViewerScreenState extends State<ViewerScreen> {
     _documentRef?.resolveListenable().load(forceReload: true);
   }
 
+  void _runDocumentAction(_DocumentAction action, PdfSource source) {
+    switch (action) {
+      case _DocumentAction.organizePages:
+        unawaited(_organizePages(source));
+      case _DocumentAction.fillForm:
+        unawaited(_fillForm(source));
+    }
+  }
+
+  /// Opens the form filler on a copy of the current document.
+  ///
+  /// Whether a PDF has fields is only known once it has been read, so the
+  /// screen is always offered and says so when there is nothing to fill.
+  Future<void> _fillForm(PdfSource source) async {
+    final saved = await Navigator.of(context).push<Uri>(
+      MaterialPageRoute(
+        builder: (context) => FormFillScreen(source: source, service: widget.formService),
+      ),
+    );
+    if (!mounted || saved == null) return;
+    _announceSavedCopy(saved);
+  }
+
   /// Opens the page organiser on a copy of the current document.
   ///
   /// The organiser never edits the document the viewer is showing; it saves a
@@ -241,7 +270,12 @@ class _ViewerScreenState extends State<ViewerScreen> {
       ),
     );
     if (!mounted || saved == null) return;
+    _announceSavedCopy(saved);
+  }
 
+  /// Reports where a saved copy went, offering to open it when it landed
+  /// somewhere the app can read back.
+  void _announceSavedCopy(Uri saved) {
     final path = saved.isScheme('file') ? saved.toFilePath() : null;
     _showMessage(
       'Saved ${_fileNameOf(saved)}',
@@ -565,10 +599,29 @@ class _ViewerScreenState extends State<ViewerScreen> {
                 : () => _annotations.isEnabled = !_annotations.isEnabled,
             icon: const Icon(Icons.edit_outlined),
           ),
-          IconButton(
-            tooltip: 'Organize pages',
-            onPressed: source == null ? null : () => _organizePages(source),
-            icon: const Icon(Icons.auto_awesome_motion_outlined),
+          PopupMenuButton<_DocumentAction>(
+            tooltip: 'Edit document',
+            icon: const Icon(Icons.edit_document),
+            enabled: source != null,
+            onSelected: (action) => _runDocumentAction(action, source!),
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _DocumentAction.organizePages,
+                child: ListTile(
+                  leading: Icon(Icons.auto_awesome_motion_outlined),
+                  title: Text('Organize pages…'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuItem(
+                value: _DocumentAction.fillForm,
+                child: ListTile(
+                  leading: Icon(Icons.checklist_outlined),
+                  title: Text('Fill form…'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+            ],
           ),
           IconButton(
             tooltip: 'Open PDF',
@@ -674,6 +727,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
     );
   }
 }
+
+/// Actions that change the document itself, rather than how it is shown.
+enum _DocumentAction { organizePages, fillForm }
 
 /// Reading mode, rotation, night mode and app theme, in one overflow menu.
 class _ViewMenu extends StatelessWidget {

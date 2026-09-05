@@ -13,6 +13,7 @@ import 'package:the_pdf_project/features/viewer/services/pdf_picker.dart';
 import 'package:the_pdf_project/features/viewer/ui/empty_state.dart';
 import 'package:the_pdf_project/features/viewer/ui/load_error_banner.dart';
 import 'package:the_pdf_project/features/viewer/ui/thumbnail_panel.dart';
+import 'package:the_pdf_project/features/forms/ui/form_fill_screen.dart';
 import 'package:the_pdf_project/features/pages/ui/page_organizer_screen.dart';
 import 'package:the_pdf_project/features/pages/ui/page_tile.dart';
 import 'package:the_pdf_project/features/viewer/ui/viewer_screen.dart';
@@ -203,25 +204,28 @@ void main() {
   documentTest('the viewer opens the page organiser on the current document', (tester) async {
     await openSample(tester);
 
-    expect(
-      tester
-          .widget<IconButton>(
-            find.ancestor(
-              of: find.byTooltip('Organize pages'),
-              matching: find.byType(IconButton),
-            ),
-          )
-          .onPressed,
-      isNotNull,
-    );
-
-    await tester.tap(find.byTooltip('Organize pages'));
+    await tester.tap(find.byTooltip('Edit document'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Organize pages…'));
     await pumpUntil(tester, find.byType(PageOrganizerScreen));
     await pumpUntil(tester, find.byType(PageTile));
 
     expect(find.byType(PageTile), findsNWidgets(3));
     // The viewer's own document is untouched behind the organiser.
     expect(find.text('Page 1 of sample.pdf'), findsOneWidget);
+  });
+
+  documentTest('the viewer opens the form filler on the current document', (tester) async {
+    await openSample(tester);
+
+    await tester.tap(find.byTooltip('Edit document'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fill form…'));
+    await pumpUntil(tester, find.byType(FormFillScreen));
+
+    // The fixture is a plain document, so the filler says there is nothing to
+    // fill rather than showing an empty form.
+    await pumpUntil(tester, find.text('No form fields'));
   });
 
   group('password-protected documents', () {
