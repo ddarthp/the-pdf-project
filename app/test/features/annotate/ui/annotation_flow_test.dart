@@ -1,8 +1,11 @@
 @Tags(['pdfium'])
 library;
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pdfium_dart/pdfium_dart.dart' as pdfium_bindings;
 import 'package:the_pdf_project/core/view_preferences.dart';
 import 'package:the_pdf_project/features/annotate/model/annotation.dart';
 import 'package:the_pdf_project/features/annotate/services/annotation_store.dart';
@@ -11,8 +14,10 @@ import 'package:the_pdf_project/features/viewer/model/pdf_source.dart';
 import 'package:the_pdf_project/features/viewer/services/last_page_store.dart';
 import 'package:the_pdf_project/features/viewer/services/pdf_picker.dart';
 import 'package:the_pdf_project/features/viewer/ui/viewer_bottom_bar.dart';
+import 'package:the_pdf_project/features/pages/services/pdf_saver.dart';
 import 'package:the_pdf_project/features/viewer/ui/viewer_screen.dart';
 
+import '../../../support/pdf_annotation_reader.dart';
 import '../../../support/pdfium_test_support.dart';
 
 class _FixturePdfPicker extends PdfPicker {
@@ -23,12 +28,31 @@ class _FixturePdfPicker extends PdfPicker {
       const PdfFileSource(path: sampleFixture, displayName: 'sample.pdf');
 }
 
+/// Captures what would have been written instead of opening a save dialog.
+class _RecordingSaver extends PdfSaver {
+  _RecordingSaver();
+
+  Uint8List? savedBytes;
+  String? savedName;
+
+  @override
+  Future<Uri?> savePdf({required Uint8List bytes, required String suggestedName}) async {
+    savedBytes = bytes;
+    savedName = suggestedName;
+    return Uri.file('/tmp/$suggestedName');
+  }
+}
+
 void main() {
   setUpAll(initializePdfiumForTests);
 
   late InMemoryAnnotationStore store;
+  late _RecordingSaver saver;
 
-  setUp(() => store = InMemoryAnnotationStore());
+  setUp(() {
+    store = InMemoryAnnotationStore();
+    saver = _RecordingSaver();
+  });
 
   Future<void> pumpViewer(WidgetTester tester, {Key key = const ValueKey('viewer')}) {
     return tester.pumpWidget(
@@ -39,6 +63,7 @@ void main() {
           picker: const _FixturePdfPicker(),
           lastPageStore: InMemoryLastPageStore(),
           annotationStore: store,
+          saver: saver,
         ),
       ),
     );
@@ -292,6 +317,39 @@ void main() {
     await tester.pumpAndSettle();
 
     expect((await storedAnnotations(tester)).single.color, const Color(0xFF43A047));
+  });
+
+  documentTest('exporting writes the annotations into a copy of the PDF', (tester) async {
+    await openDocument(tester);
+    await enterAnnotationMode(tester);
+
+    // Nothing drawn yet, so there is nothing to export.
+    expect(
+      tester.widget<IconButton>(
+        find.ancestor(
+          of: find.byTooltip('Save a copy with annotations'),
+          matching: find.byType(IconButton),
+        ),
+      ).onPressed,
+      isNull,
+    );
+
+    await drag(tester, const Offset(300, 400), const Offset(700, 600));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('Save a copy with annotations'));
+    // Opening a copy, writing the annotations and encoding all happen off the
+    // main isolate, so wait for the confirmation rather than a fixed delay.
+    await pumpUntil(tester, find.textContaining('Saved with 1 annotation'));
+
+    expect(saver.savedName, 'sample-annotated.pdf');
+    expect(saver.savedBytes, isNotNull);
+    expect(String.fromCharCodes(saver.savedBytes!.take(5)), '%PDF-');
+
+    // And the copy really carries a PDF ink annotation on page 1.
+    final written = await tester.runAsync(() => readAnnotations(saver.savedBytes!, 1));
+    expect(written, hasLength(1));
+    expect(written!.single.subtype, pdfium_bindings.FPDF_ANNOT_INK);
   });
 
   documentTest('annotations come back when the document is opened again', (tester) async {

@@ -53,9 +53,15 @@ own copies, edits a plan, and writes a new file only when you save.
 Annotations are stored in **normalised page space** — 0–1 across the page,
 origin top-left — so zoom, reading mode and view rotation all just move the
 page rectangle the viewer reports, and the same numbers map onto it.
-`annotate/logic/page_coordinates.dart` is that mapping. Annotations persist
-per document on-device; they are not yet written into the PDF file itself
-(see the roadmap note in `docs/SPEC.md` §3).
+`annotate/logic/page_coordinates.dart` is that mapping.
+
+Annotations persist per document on-device, and "Save a copy with
+annotations" writes them into a PDF as real PDF annotations.
+`annotate/services/pdf_annotation_writer.dart` does that through PDFium's C
+API, which pdfrx exposes via `useNativeDocumentHandle`; the coordinate
+conversion it needs lives in `annotate/logic/pdf_page_geometry.dart` and the
+drawing instructions for the shapes PDFium will not draw itself in
+`annotate/logic/annotation_appearance.dart`.
 
 ## Commands
 

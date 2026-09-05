@@ -15,6 +15,7 @@ class AnnotationToolbar extends StatelessWidget {
     required this.controller,
     required this.onClose,
     required this.onEditSelectedText,
+    required this.onExport,
     super.key,
   });
 
@@ -23,6 +24,9 @@ class AnnotationToolbar extends StatelessWidget {
 
   /// Re-opens the text of the selected note or text box.
   final VoidCallback onEditSelectedText;
+
+  /// Saves a copy of the PDF with the annotations written into it.
+  final VoidCallback onExport;
 
   static const _toolIcons = {
     AnnotationTool.pan: Icons.pan_tool_outlined,
@@ -57,6 +61,7 @@ class AnnotationToolbar extends StatelessWidget {
                   toolIcons: _toolIcons,
                   onClose: onClose,
                   onEditSelectedText: onEditSelectedText,
+                  onExport: onExport,
                 ),
                 const Divider(height: 1),
                 _StyleRow(controller: controller),
@@ -75,12 +80,14 @@ class _ToolRow extends StatelessWidget {
     required this.toolIcons,
     required this.onClose,
     required this.onEditSelectedText,
+    required this.onExport,
   });
 
   final AnnotationController controller;
   final Map<AnnotationTool, IconData> toolIcons;
   final VoidCallback onClose;
   final VoidCallback onEditSelectedText;
+  final VoidCallback onExport;
 
   @override
   Widget build(BuildContext context) {
@@ -122,6 +129,11 @@ class _ToolRow extends StatelessWidget {
           tooltip: 'Delete selected',
           onPressed: selected == null ? null : () => controller.remove(selected.id),
           icon: Icon(Icons.delete_outline, color: selected == null ? null : scheme.error),
+        ),
+        IconButton(
+          tooltip: 'Save a copy with annotations',
+          onPressed: controller.hasAnnotations ? onExport : null,
+          icon: const Icon(Icons.save_alt),
         ),
         IconButton(
           tooltip: 'Done annotating',

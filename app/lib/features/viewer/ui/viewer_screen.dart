@@ -8,10 +8,12 @@ import '../../../core/view_preferences.dart';
 import '../../annotate/annotation_controller.dart';
 import '../../annotate/model/annotation.dart';
 import '../../annotate/services/annotation_store.dart';
+import '../../annotate/services/pdf_annotation_writer.dart';
 import '../../annotate/ui/annotation_layer.dart';
 import '../../annotate/ui/annotation_text_dialog.dart';
 import '../../annotate/ui/annotation_toolbar.dart';
 import '../../annotate/ui/annotations_panel.dart';
+import '../../pages/services/pdf_saver.dart';
 import '../../pages/ui/page_organizer_screen.dart';
 import '../logic/page_layout.dart';
 import '../logic/page_navigation.dart';
@@ -37,6 +39,8 @@ class ViewerScreen extends StatefulWidget {
     this.picker = const PdfPicker(),
     this.lastPageStore,
     this.annotationStore,
+    this.saver = const PdfSaver(),
+    this.annotationWriter = const PdfAnnotationWriter(),
     super.key,
   });
 
@@ -50,6 +54,12 @@ class ViewerScreen extends StatefulWidget {
 
   /// Defaults to the on-device shared-preferences store.
   final AnnotationStore? annotationStore;
+
+  /// Writes an exported PDF wherever the reader chooses.
+  final PdfSaver saver;
+
+  /// Turns the app's annotations into real PDF annotations.
+  final PdfAnnotationWriter annotationWriter;
 
   @override
   State<ViewerScreen> createState() => _ViewerScreenState();
@@ -85,6 +95,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   int _initialPageNumber = 1;
   int _passwordAttempts = 0;
   bool _isOpening = false;
+  bool _isExporting = false;
   bool _isSearchVisible = false;
   late ReadingMode _readingMode = widget.preferences.readingMode;
 
@@ -439,6 +450,64 @@ class _ViewerScreenState extends State<ViewerScreen> {
     });
   }
 
+  /// Saves a copy of the document with the annotations written into it.
+  ///
+  /// The export opens its own copy of the PDF so the document on screen is
+  /// never modified — the same rule the page organiser follows.
+  Future<void> _exportAnnotations() async {
+    final source = _source;
+    if (source == null || _isExporting || !_annotations.hasAnnotations) return;
+    setState(() => _isExporting = true);
+    try {
+      final document = await _openCopyOf(source);
+      try {
+        final result = await widget.annotationWriter.export(
+          document,
+          _annotations.annotations,
+        );
+        if (!mounted) return;
+        final destination = await widget.saver.savePdf(
+          bytes: result.bytes,
+          suggestedName: _annotatedFileName(source.displayName),
+        );
+        if (!mounted || destination == null) return;
+        _showMessage(
+          result.skipped == 0
+              ? 'Saved with ${result.written} '
+                    '${result.written == 1 ? 'annotation' : 'annotations'}.'
+              : 'Saved ${result.written} of ${result.total} annotations; '
+                    '${result.skipped} could not be written.',
+        );
+      } finally {
+        await document.dispose();
+      }
+    } on Object catch (error) {
+      if (!mounted) return;
+      _showMessage('Could not export the annotations: $error');
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+  Future<PdfDocument> _openCopyOf(PdfSource source) => switch (source) {
+    PdfFileSource(:final path) => PdfDocument.openFile(
+      path,
+      passwordProvider: () => _requestPassword(source),
+    ),
+    PdfDataSource(:final bytes, :final sourceId) => PdfDocument.openData(
+      bytes,
+      sourceName: 'export-$sourceId',
+      passwordProvider: () => _requestPassword(source),
+    ),
+  };
+
+  static String _annotatedFileName(String name) {
+    final base = name.toLowerCase().endsWith('.pdf')
+        ? name.substring(0, name.length - 4)
+        : name;
+    return '$base-annotated.pdf';
+  }
+
   /// Takes the reader to an annotation and selects it.
   void _goToAnnotation(Annotation annotation) {
     _goToPage(annotation.pageNumber);
@@ -517,6 +586,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
                 final selected = _annotations.selected;
                 if (selected != null) unawaited(_editAnnotationText(selected));
               },
+              onExport: () => unawaited(_exportAnnotations()),
             )
           : ViewerBottomBar(
               pageNumber: _pageNumber,
