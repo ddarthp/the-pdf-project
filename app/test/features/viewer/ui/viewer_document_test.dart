@@ -1,6 +1,8 @@
 @Tags(['pdfium'])
 library;
 
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -14,11 +16,13 @@ import 'package:the_pdf_project/features/viewer/ui/empty_state.dart';
 import 'package:the_pdf_project/features/viewer/ui/load_error_banner.dart';
 import 'package:the_pdf_project/features/viewer/ui/thumbnail_panel.dart';
 import 'package:the_pdf_project/features/forms/ui/form_fill_screen.dart';
+import 'package:the_pdf_project/features/share/services/pdf_export_service.dart';
 import 'package:the_pdf_project/features/pages/ui/page_organizer_screen.dart';
 import 'package:the_pdf_project/features/pages/ui/page_tile.dart';
 import 'package:the_pdf_project/features/viewer/ui/viewer_screen.dart';
 
 import '../../../support/pdfium_test_support.dart';
+import '../../../support/recording_exporter.dart';
 
 /// Hands the screen a fixture from disk instead of opening a native picker.
 class _FixturePdfPicker extends PdfPicker {
@@ -32,7 +36,18 @@ class _FixturePdfPicker extends PdfPicker {
 }
 
 void main() {
-  setUpAll(initializePdfiumForTests);
+  /// Measured once outside the tests: real file I/O never completes inside a
+  /// widget test's fake clock.
+  late int sampleFixtureBytes;
+
+  setUpAll(() async {
+    await initializePdfiumForTests();
+    sampleFixtureBytes = await File(sampleFixture).length();
+  });
+
+  late RecordingExporter exporter;
+
+  setUp(() => exporter = RecordingExporter());
 
   Future<void> pumpScreen(
     WidgetTester tester, {
@@ -51,6 +66,7 @@ void main() {
           preferences: preferences,
           picker: _FixturePdfPicker(fixture, name),
           lastPageStore: store,
+          exporter: exporter,
         ),
       ),
     );
@@ -204,7 +220,7 @@ void main() {
   documentTest('the viewer opens the page organiser on the current document', (tester) async {
     await openSample(tester);
 
-    await tester.tap(find.byTooltip('Edit document'));
+    await tester.tap(find.byTooltip('Document actions'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Organize pages…'));
     await pumpUntil(tester, find.byType(PageOrganizerScreen));
@@ -215,10 +231,88 @@ void main() {
     expect(find.text('Page 1 of sample.pdf'), findsOneWidget);
   });
 
+  group('sharing the open document', () {
+    Future<void> openExportSheet(WidgetTester tester) async {
+      await tester.tap(find.byTooltip('Document actions'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Share or print…'));
+      await pumpUntil(tester, find.text('Share…'));
+      await tester.pump(const Duration(milliseconds: 400));
+    }
+
+    documentTest('offers to save, share or print what is on screen', (tester) async {
+      await openSample(tester);
+
+      await openExportSheet(tester);
+
+      expect(find.text('sample.pdf'), findsWidgets);
+      expect(find.text('Save to Files…'), findsOneWidget);
+      expect(find.text('Print…'), findsOneWidget);
+    });
+
+    documentTest('sharing sends the document exactly as it is on disk', (tester) async {
+      await openSample(tester);
+      await openExportSheet(tester);
+
+      await tester.tap(find.text('Share…'));
+      await pumpUntil(tester, find.text('Shared'));
+
+      expect(exporter.destination, PdfExportDestination.share);
+      expect(exporter.fileName, 'sample.pdf');
+      expect(String.fromCharCodes(exporter.bytes!.take(5)), '%PDF-');
+      expect(exporter.bytes!.length, sampleFixtureBytes);
+      // The share sheet opens as a popover on a tablet, so it is told where
+      // it was asked from.
+      expect(exporter.originBounds, isNotNull);
+    });
+
+    documentTest('printing goes to the printer, not to a file', (tester) async {
+      await openSample(tester);
+      await openExportSheet(tester);
+
+      await tester.tap(find.text('Print…'));
+      await pumpUntil(tester, find.text('Sent to the printer'));
+
+      expect(exporter.destination, PdfExportDestination.print);
+    });
+
+    documentTest('an annotated document is sent with its annotations', (tester) async {
+      await openSample(tester);
+      await tester.tap(find.byTooltip('Annotate'));
+      await tester.pumpAndSettle();
+      final gesture = await tester.startGesture(const Offset(300, 400));
+      for (var step = 1; step <= 6; step++) {
+        await gesture.moveTo(Offset(300 + step * 60, 400 + step * 20));
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await gesture.up();
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('Done annotating'));
+      await tester.pumpAndSettle();
+
+      await openExportSheet(tester);
+
+      // Sending the plain file would quietly drop what is on screen, so the
+      // annotated copy goes instead — and the sheet says so.
+      expect(find.text('sample-annotated.pdf'), findsOneWidget);
+      expect(find.text('1 annotation'), findsOneWidget);
+
+      await tester.tap(find.text('Share…'));
+      await pumpUntil(tester, find.text('Shared'));
+
+      expect(exporter.fileName, 'sample-annotated.pdf');
+      expect(
+        exporter.bytes!.length,
+        greaterThan(sampleFixtureBytes),
+        reason: 'the annotated copy carries more than the original',
+      );
+    });
+  });
+
   documentTest('the viewer opens the form filler on the current document', (tester) async {
     await openSample(tester);
 
-    await tester.tap(find.byTooltip('Edit document'));
+    await tester.tap(find.byTooltip('Document actions'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Fill form…'));
     await pumpUntil(tester, find.byType(FormFillScreen));

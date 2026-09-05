@@ -3,7 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 
-import '../../pages/services/pdf_saver.dart';
+import '../../share/services/pdf_export_service.dart';
+import '../../share/ui/pdf_export_sheet.dart';
 import '../../viewer/model/pdf_source.dart';
 import '../../viewer/ui/password_dialog.dart';
 import '../logic/form_edits.dart';
@@ -20,13 +21,15 @@ class FormFillScreen extends StatefulWidget {
   const FormFillScreen({
     required this.source,
     this.service = const PdfFormService(),
-    this.saver = const PdfSaver(),
+    this.exporter = const PdfExportService(),
     super.key,
   });
 
   final PdfSource source;
   final PdfFormService service;
-  final PdfSaver saver;
+
+  /// Sends the filled PDF to a file, the share sheet or a printer.
+  final PdfExportService exporter;
 
   @override
   State<FormFillScreen> createState() => _FormFillScreenState();
@@ -114,18 +117,24 @@ class _FormFillScreenState extends State<FormFillScreen> {
     try {
       final result = await widget.service.fill(document, _fields, changes);
       if (!mounted) return;
-      final destination = await widget.saver.savePdf(
-        bytes: result.bytes,
-        suggestedName: _suggestedFileName(),
+      final fileName = _suggestedFileName();
+      final destination = await showPdfExportSheet(
+        context,
+        fileName: fileName,
+        note: result.skipped > 0
+            ? '${result.filled} of ${result.requested} fields filled; '
+                  '${result.skipped} could not be'
+            : '${result.filled} ${result.filled == 1 ? 'field' : 'fields'} filled',
       );
       if (!mounted || destination == null) return;
-      if (result.skipped > 0) {
-        _showMessage(
-          'Saved ${result.filled} of ${result.requested} fields; '
-          '${result.skipped} could not be filled.',
-        );
-      }
-      Navigator.of(context).pop(destination);
+
+      final outcome = await widget.exporter.run(
+        destination,
+        bytes: result.bytes,
+        fileName: fileName,
+      );
+      if (!mounted || !outcome.completed) return;
+      Navigator.of(context).pop(outcome.savedTo);
     } on Object catch (error) {
       if (!mounted) return;
       _showMessage('Could not save the form: $error');

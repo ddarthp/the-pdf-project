@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -15,7 +17,8 @@ import '../../annotate/ui/annotation_toolbar.dart';
 import '../../annotate/ui/annotations_panel.dart';
 import '../../forms/services/pdf_form_service.dart';
 import '../../forms/ui/form_fill_screen.dart';
-import '../../pages/services/pdf_saver.dart';
+import '../../share/services/pdf_export_service.dart';
+import '../../share/ui/pdf_export_sheet.dart';
 import '../../pages/ui/page_organizer_screen.dart';
 import '../../signature/model/signature_source.dart';
 import '../../signature/ui/signature_image_picker.dart';
@@ -44,7 +47,7 @@ class ViewerScreen extends StatefulWidget {
     this.picker = const PdfPicker(),
     this.lastPageStore,
     this.annotationStore,
-    this.saver = const PdfSaver(),
+    this.exporter = const PdfExportService(),
     this.annotationWriter = const PdfAnnotationWriter(),
     this.signatureImagePicker = const SignatureImagePicker(),
     this.formService = const PdfFormService(),
@@ -62,8 +65,8 @@ class ViewerScreen extends StatefulWidget {
   /// Defaults to the on-device shared-preferences store.
   final AnnotationStore? annotationStore;
 
-  /// Writes an exported PDF wherever the reader chooses.
-  final PdfSaver saver;
+  /// Sends a finished PDF to a file, the share sheet or a printer.
+  final PdfExportService exporter;
 
   /// Turns the app's annotations into real PDF annotations.
   final PdfAnnotationWriter annotationWriter;
@@ -238,6 +241,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   void _runDocumentAction(_DocumentAction action, PdfSource source) {
     switch (action) {
+      case _DocumentAction.shareOrPrint:
+        unawaited(_sendCurrentDocument(source));
       case _DocumentAction.organizePages:
         unawaited(_organizePages(source));
       case _DocumentAction.fillForm:
@@ -276,17 +281,18 @@ class _ViewerScreenState extends State<ViewerScreen> {
   /// Reports where a saved copy went, offering to open it when it landed
   /// somewhere the app can read back.
   void _announceSavedCopy(Uri saved) {
-    final path = saved.isScheme('file') ? saved.toFilePath() : null;
-    _showMessage(
-      'Saved ${_fileNameOf(saved)}',
-      action: path == null
-          ? null
-          : SnackBarAction(
-              label: 'Open',
-              onPressed: () => _openSource(
-                PdfFileSource(path: path, displayName: _fileNameOf(saved)),
-              ),
-            ),
+    _showMessage('Saved ${_fileNameOf(saved)}', action: _openAction(saved));
+  }
+
+  /// An "Open" button for a file the app can read back, or nothing for a
+  /// destination it cannot — a share sheet never says where a document went.
+  SnackBarAction? _openAction(Uri? saved) {
+    if (saved == null || !saved.isScheme('file')) return null;
+    final path = saved.toFilePath();
+    return SnackBarAction(
+      label: 'Open',
+      onPressed: () =>
+          _openSource(PdfFileSource(path: path, displayName: _fileNameOf(saved))),
     );
   }
 
@@ -498,7 +504,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
     });
   }
 
-  /// Saves a copy of the document with the annotations written into it.
+  /// Sends a copy of the document with the annotations written into it.
   ///
   /// The export opens its own copy of the PDF so the document on screen is
   /// never modified — the same rule the page organiser follows.
@@ -508,27 +514,22 @@ class _ViewerScreenState extends State<ViewerScreen> {
     setState(() => _isExporting = true);
     try {
       final document = await _openCopyOf(source);
+      final PdfAnnotationExport result;
       try {
-        final result = await widget.annotationWriter.export(
-          document,
-          _annotations.annotations,
-        );
-        if (!mounted) return;
-        final destination = await widget.saver.savePdf(
-          bytes: result.bytes,
-          suggestedName: _annotatedFileName(source.displayName),
-        );
-        if (!mounted || destination == null) return;
-        _showMessage(
-          result.skipped == 0
-              ? 'Saved with ${result.written} '
-                    '${result.written == 1 ? 'annotation' : 'annotations'}.'
-              : 'Saved ${result.written} of ${result.total} annotations; '
-                    '${result.skipped} could not be written.',
-        );
+        result = await widget.annotationWriter.export(document, _annotations.annotations);
       } finally {
         await document.dispose();
       }
+      if (!mounted) return;
+
+      await _sendPdf(
+        bytes: result.bytes,
+        fileName: _annotatedFileName(source.displayName),
+        note: result.skipped == 0
+            ? '${result.written} ${result.written == 1 ? 'annotation' : 'annotations'}'
+            : '${result.written} of ${result.total} annotations; '
+                  '${result.skipped} could not be written',
+      );
     } on Object catch (error) {
       if (!mounted) return;
       _showMessage('Could not export the annotations: $error');
@@ -536,6 +537,68 @@ class _ViewerScreenState extends State<ViewerScreen> {
       if (mounted) setState(() => _isExporting = false);
     }
   }
+
+  /// Shares, prints or saves the document on screen.
+  ///
+  /// Annotations are part of what is on screen, so a document that has any is
+  /// sent with them written in — and the sheet says so rather than quietly
+  /// sending something different from what the reader is looking at.
+  Future<void> _sendCurrentDocument(PdfSource source) async {
+    if (_isExporting) return;
+    if (_annotations.hasAnnotations) {
+      await _exportAnnotations();
+      return;
+    }
+
+    setState(() => _isExporting = true);
+    try {
+      await _sendPdf(bytes: await _bytesOf(source), fileName: source.displayName);
+    } on Object catch (error) {
+      if (!mounted) return;
+      _showMessage('Could not share this PDF: $error');
+    } finally {
+      if (mounted) setState(() => _isExporting = false);
+    }
+  }
+
+  /// Asks where a finished PDF should go, then sends it there.
+  Future<void> _sendPdf({
+    required Uint8List bytes,
+    required String fileName,
+    String? note,
+  }) async {
+    final destination = await showPdfExportSheet(context, fileName: fileName, note: note);
+    if (!mounted || destination == null) return;
+
+    final result = await widget.exporter.run(
+      destination,
+      bytes: bytes,
+      fileName: fileName,
+      // On a tablet the share sheet opens as a popover; point it at the
+      // viewer rather than the corner of the screen.
+      originBounds: _shareOrigin(),
+    );
+    if (!mounted) return;
+    final message = result.message;
+    if (message != null) {
+      _showMessage(
+        message,
+        action: _openAction(result.savedTo),
+      );
+    }
+  }
+
+  Rect? _shareOrigin() {
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return null;
+    return box.localToGlobal(Offset.zero) & box.size;
+  }
+
+  /// The document's own bytes, for sharing it as it stands on disk.
+  Future<Uint8List> _bytesOf(PdfSource source) => switch (source) {
+    PdfFileSource(:final path) => File(path).readAsBytes(),
+    PdfDataSource(:final bytes) => Future.value(bytes),
+  };
 
   Future<PdfDocument> _openCopyOf(PdfSource source) => switch (source) {
     PdfFileSource(:final path) => PdfDocument.openFile(
@@ -600,11 +663,20 @@ class _ViewerScreenState extends State<ViewerScreen> {
             icon: const Icon(Icons.edit_outlined),
           ),
           PopupMenuButton<_DocumentAction>(
-            tooltip: 'Edit document',
+            tooltip: 'Document actions',
             icon: const Icon(Icons.edit_document),
             enabled: source != null,
             onSelected: (action) => _runDocumentAction(action, source!),
             itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _DocumentAction.shareOrPrint,
+                child: ListTile(
+                  leading: Icon(Icons.ios_share),
+                  title: Text('Share or print…'),
+                  contentPadding: EdgeInsets.zero,
+                ),
+              ),
+              PopupMenuDivider(),
               PopupMenuItem(
                 value: _DocumentAction.organizePages,
                 child: ListTile(
@@ -729,7 +801,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
 }
 
 /// Actions that change the document itself, rather than how it is shown.
-enum _DocumentAction { organizePages, fillForm }
+enum _DocumentAction { shareOrPrint, organizePages, fillForm }
 
 /// Reading mode, rotation, night mode and app theme, in one overflow menu.
 class _ViewMenu extends StatelessWidget {

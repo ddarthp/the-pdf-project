@@ -1,17 +1,16 @@
 @Tags(['pdfium'])
 library;
 
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:the_pdf_project/features/pages/ui/page_organizer_screen.dart';
 import 'package:the_pdf_project/features/pages/ui/page_tile.dart';
-import 'package:the_pdf_project/features/pages/services/pdf_saver.dart';
+import 'package:the_pdf_project/features/share/services/pdf_export_service.dart';
 import 'package:the_pdf_project/features/viewer/model/pdf_source.dart';
 import 'package:the_pdf_project/features/viewer/services/pdf_picker.dart';
 
 import '../../../support/pdfium_test_support.dart';
+import '../../../support/recording_exporter.dart';
 
 const _sample = PdfFileSource(path: sampleFixture, displayName: 'sample.pdf');
 
@@ -25,21 +24,6 @@ class _MergePicker extends PdfPicker {
   ];
 }
 
-/// Captures what would have been written instead of opening a save dialog.
-class _RecordingSaver extends PdfSaver {
-  _RecordingSaver();
-
-  Uint8List? savedBytes;
-  String? savedName;
-
-  @override
-  Future<Uri?> savePdf({required Uint8List bytes, required String suggestedName}) async {
-    savedBytes = bytes;
-    savedName = suggestedName;
-    return Uri.file('/tmp/$suggestedName');
-  }
-}
-
 void main() {
   setUpAll(initializePdfiumForTests);
 
@@ -48,7 +32,7 @@ void main() {
   Future<Future<Uri?>> pushOrganizer(
     WidgetTester tester, {
     PdfPicker picker = const PdfPicker(),
-    PdfSaver? saver,
+    PdfExportService? exporter,
   }) async {
     final navigatorKey = GlobalKey<NavigatorState>();
     await tester.pumpWidget(
@@ -59,7 +43,7 @@ void main() {
         builder: (context) => PageOrganizerScreen(
           source: _sample,
           picker: picker,
-          saver: saver ?? const PdfSaver(),
+          exporter: exporter ?? const PdfExportService(),
         ),
       ),
     );
@@ -238,8 +222,8 @@ void main() {
   });
 
   documentTest('saving encodes the plan and reports where it went', (tester) async {
-    final saver = _RecordingSaver();
-    final result = await pushOrganizer(tester, saver: saver);
+    final exporter = RecordingExporter();
+    final result = await pushOrganizer(tester, exporter: exporter);
 
     await tester.tap(find.text('Page 1 of sample.pdf'));
     await tester.pumpAndSettle();
@@ -247,14 +231,22 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.widgetWithText(FilledButton, 'Save PDF'));
+    // Encoding happens before the destination sheet appears.
+    await pumpUntil(tester, find.text('Save to Files…'));
+    // Let the sheet finish sliding up before reaching into it. Waiting for
+    // quiescence is no good here: the page thumbnails keep asking for frames.
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('2 pages'), findsWidgets, reason: 'the sheet says what is being saved');
+    await tester.tap(find.text('Save to Files…'));
+
     // A successful save closes the organiser and hands back the destination.
     await pumpUntilAbsent(tester, find.byType(PageOrganizerScreen));
     await tester.pumpAndSettle();
 
-    expect(saver.savedName, 'sample-edited.pdf');
-    expect(saver.savedBytes, isNotNull);
-    // A PDF, and smaller than the three-page original it came from.
-    expect(String.fromCharCodes(saver.savedBytes!.take(5)), '%PDF-');
+    expect(exporter.destination, PdfExportDestination.saveToFiles);
+    expect(exporter.fileName, 'sample-edited.pdf');
+    expect(exporter.bytes, isNotNull);
+    expect(String.fromCharCodes(exporter.bytes!.take(5)), '%PDF-');
     expect(await result, Uri.file('/tmp/sample-edited.pdf'));
   });
 }

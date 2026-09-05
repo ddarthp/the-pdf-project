@@ -14,6 +14,7 @@ T0 viewer.
 | PDF rendering / text / outline | `pdfrx` (PDFium) |
 | PDF generation (test fixtures) | `pdf` |
 | Document picking | `file_picker` |
+| Print and share sheet | `printing` |
 | Preferences (last page read) | `shared_preferences` |
 | Paths | `path_provider` |
 
@@ -49,6 +50,9 @@ lib/
     model/                     fields, their kinds and their controls
     services/                  PDFium form reading and filling
     ui/                        the form filler and its per-kind editors
+  features/share/
+    services/                  saving, sharing and printing a finished PDF
+    ui/                        the destination sheet
 ```
 
 Each feature's `logic/` deliberately has no pdfrx imports so the maths is
@@ -76,6 +80,13 @@ drawing instructions for the shapes PDFium will not draw itself in
 A signature is captured in `features/signature/` and then placed as a
 `SignatureAnnotation`, so it inherits the annotation feature's placement,
 selection, moving, resizing and export rather than repeating any of it.
+
+Every screen that produces a PDF — the organiser, the form filler, the
+annotation export, and the viewer itself — hands it to the same destination
+sheet, so saving to Files, the system share sheet and the print dialog are
+reachable from all of them. Sharing from the viewer sends the annotated copy
+when the document has annotations, and the sheet says so rather than quietly
+sending something different from what is on screen.
 
 Form filling goes through PDFium's form API rather than writing values into
 the document by hand: the app focuses a field and types into it, clicks a tick

@@ -9,7 +9,8 @@ import '../../viewer/ui/password_dialog.dart';
 import '../logic/page_operations.dart';
 import '../model/page_plan_entry.dart';
 import '../services/pdf_page_editor.dart';
-import '../services/pdf_saver.dart';
+import '../../share/services/pdf_export_service.dart';
+import '../../share/ui/pdf_export_sheet.dart';
 import 'page_range_dialog.dart';
 import 'page_tile.dart';
 
@@ -22,13 +23,15 @@ class PageOrganizerScreen extends StatefulWidget {
   const PageOrganizerScreen({
     required this.source,
     this.picker = const PdfPicker(),
-    this.saver = const PdfSaver(),
+    this.exporter = const PdfExportService(),
     super.key,
   });
 
   final PdfSource source;
   final PdfPicker picker;
-  final PdfSaver saver;
+
+  /// Sends the finished PDF to a file, the share sheet or a printer.
+  final PdfExportService exporter;
 
   @override
   State<PageOrganizerScreen> createState() => _PageOrganizerScreenState();
@@ -204,12 +207,17 @@ class _PageOrganizerScreenState extends State<PageOrganizerScreen> {
     try {
       final bytes = await _editor.encode(_plan);
       if (!mounted) return;
-      final destination = await widget.saver.savePdf(
-        bytes: bytes,
-        suggestedName: _suggestedFileName(),
+      final fileName = _suggestedFileName();
+      final destination = await showPdfExportSheet(
+        context,
+        fileName: fileName,
+        note: '${_plan.length} ${_plan.length == 1 ? 'page' : 'pages'}',
       );
-      if (!mounted) return;
-      if (destination != null) Navigator.of(context).pop(destination);
+      if (!mounted || destination == null) return;
+
+      final result = await widget.exporter.run(destination, bytes: bytes, fileName: fileName);
+      if (!mounted || !result.completed) return;
+      Navigator.of(context).pop(result.savedTo);
     } on Object catch (error) {
       if (!mounted) return;
       _showMessage('Could not save the PDF: $error');

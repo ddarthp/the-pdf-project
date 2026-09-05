@@ -1,43 +1,26 @@
 @Tags(['pdfium'])
 library;
 
-import 'dart:typed_data';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:the_pdf_project/features/forms/model/pdf_form_field.dart';
 import 'package:the_pdf_project/features/forms/services/pdf_form_service.dart';
 import 'package:the_pdf_project/features/forms/ui/form_fill_screen.dart';
-import 'package:the_pdf_project/features/pages/services/pdf_saver.dart';
 import 'package:the_pdf_project/features/viewer/model/pdf_source.dart';
 
 import '../../../support/pdfium_test_support.dart';
+import '../../../support/recording_exporter.dart';
 
 const _form = PdfFileSource(path: formFixture, displayName: 'form.pdf');
 const _noForm = PdfFileSource(path: sampleFixture, displayName: 'sample.pdf');
 
-/// Captures what would have been written instead of opening a save dialog.
-class _RecordingSaver extends PdfSaver {
-  _RecordingSaver();
-
-  Uint8List? savedBytes;
-  String? savedName;
-
-  @override
-  Future<Uri?> savePdf({required Uint8List bytes, required String suggestedName}) async {
-    savedBytes = bytes;
-    savedName = suggestedName;
-    return Uri.file('/tmp/$suggestedName');
-  }
-}
-
 void main() {
   setUpAll(initializePdfiumForTests);
 
-  late _RecordingSaver saver;
+  late RecordingExporter exporter;
 
-  setUp(() => saver = _RecordingSaver());
+  setUp(() => exporter = RecordingExporter());
 
   Future<Future<Uri?>> pushScreen(WidgetTester tester, {PdfSource source = _form}) async {
     final navigatorKey = GlobalKey<NavigatorState>();
@@ -45,7 +28,9 @@ void main() {
       MaterialApp(navigatorKey: navigatorKey, home: const Scaffold(body: SizedBox())),
     );
     final result = navigatorKey.currentState!.push<Uri>(
-      MaterialPageRoute(builder: (context) => FormFillScreen(source: source, saver: saver)),
+      MaterialPageRoute(
+        builder: (context) => FormFillScreen(source: source, exporter: exporter),
+      ),
     );
     await pumpUntil(tester, find.byType(FormFillScreen));
     return result;
@@ -55,7 +40,7 @@ void main() {
   Future<List<PdfFormField>> savedFields(WidgetTester tester) async {
     final fields = await tester.runAsync(() async {
       final document = await PdfDocument.openData(
-        saver.savedBytes!,
+        exporter.bytes!,
         sourceName: 'saved-${DateTime.now().microsecondsSinceEpoch}',
       );
       try {
@@ -120,10 +105,16 @@ void main() {
     expect(find.text('4 of 4 filled in'), findsOneWidget);
 
     await tester.tap(find.widgetWithText(FilledButton, 'Save filled PDF'));
+    await pumpUntil(tester, find.text('Save to Files…'));
+    // Let the sheet finish sliding up before reaching into it. Waiting for
+    // quiescence is no good here: the page thumbnails keep asking for frames.
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('4 fields filled'), findsOneWidget);
+    await tester.tap(find.text('Save to Files…'));
     await pumpUntilAbsent(tester, find.byType(FormFillScreen));
     await tester.pumpAndSettle();
 
-    expect(saver.savedName, 'form-filled.pdf');
+    expect(exporter.fileName, 'form-filled.pdf');
     final fields = await savedFields(tester);
     expect(valueOf(fields, 'full_name'), 'Ada Lovelace');
     expect(valueOf(fields, 'subscribe'), 'Yes');
@@ -141,7 +132,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Nothing has been filled in yet.'), findsOneWidget);
-    expect(saver.savedBytes, isNull);
+    expect(exporter.bytes, isNull);
     expect(find.byType(FormFillScreen), findsOneWidget);
   });
 
