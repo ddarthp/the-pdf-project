@@ -25,13 +25,24 @@ lib/
   core/                        theme, app-wide view preferences
   features/viewer/
     logic/                     pure page-layout + navigation maths
-    model/                     reading mode, PDF source
-    services/                  system document picker
+    model/                     reading mode, view rotation, PDF source
+    services/                  system document picker, last-page store
     ui/                        viewer screen, panels, toolbars
+  features/pages/
+    logic/                     pure plan transforms, page-range parsing
+    model/                     page plan entries
+    services/                  PDFium-backed encoder, save dialog
+    ui/                        page organiser screen
 ```
 
-`logic/` deliberately has no pdfrx imports so the maths is unit-testable
-without a PDFium document; `logic/pdfrx_layout_adapter.dart` is the only bridge.
+Each feature's `logic/` deliberately has no pdfrx imports so the maths is
+unit-testable without a PDFium document. In the viewer,
+`logic/pdfrx_layout_adapter.dart` is the only bridge; in page operations, the
+plan is a plain list of page references and `services/pdf_page_editor.dart`
+turns it into real pages.
+
+The page organiser never edits the document the viewer has open: it opens its
+own copies, edits a plan, and writes a new file only when you save.
 
 ## Commands
 

@@ -1,8 +1,6 @@
 @Tags(['pdfium'])
 library;
 
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdfrx/pdfrx.dart';
@@ -15,11 +13,11 @@ import 'package:the_pdf_project/features/viewer/services/pdf_picker.dart';
 import 'package:the_pdf_project/features/viewer/ui/empty_state.dart';
 import 'package:the_pdf_project/features/viewer/ui/load_error_banner.dart';
 import 'package:the_pdf_project/features/viewer/ui/thumbnail_panel.dart';
+import 'package:the_pdf_project/features/pages/ui/page_organizer_screen.dart';
+import 'package:the_pdf_project/features/pages/ui/page_tile.dart';
 import 'package:the_pdf_project/features/viewer/ui/viewer_screen.dart';
 
-const sampleFixture = 'test/fixtures/sample.pdf';
-const encryptedFixture = 'test/fixtures/encrypted.pdf';
-const encryptedPassword = 'letmein';
+import '../../../support/pdfium_test_support.dart';
 
 /// Hands the screen a fixture from disk instead of opening a native picker.
 class _FixturePdfPicker extends PdfPicker {
@@ -32,52 +30,8 @@ class _FixturePdfPicker extends PdfPicker {
   Future<PdfSource?> pickPdf() async => PdfFileSource(path: path, displayName: name);
 }
 
-/// Pumps until [finder] matches, letting real async work (file I/O, PDFium
-/// calls, image decoding) run between frames. `pumpAndSettle` alone is not
-/// enough: loading a document schedules no frames while it waits on I/O.
-Future<void> pumpUntil(
-  WidgetTester tester,
-  Finder finder, {
-  Duration timeout = const Duration(seconds: 20),
-}) async {
-  final deadline = DateTime.now().add(timeout);
-  while (DateTime.now().isBefore(deadline)) {
-    if (finder.evaluate().isNotEmpty) return;
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
-    await tester.pump(const Duration(milliseconds: 20));
-  }
-  fail('Timed out waiting for $finder');
-}
-
-/// Lets pdfrx's progressive page-loading finish its trailing timers.
-///
-/// Without this the test framework reports "a Timer is still pending" for any
-/// test whose last document load lands close to the end of the test body.
-Future<void> drainBackgroundLoading(WidgetTester tester) async {
-  for (var i = 0; i < 5; i++) {
-    await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
-    await tester.pump(const Duration(milliseconds: 200));
-  }
-}
-
-/// A widget test that opens a document: gives it a viewport big enough for the
-/// toolbars and a whole page, and drains pdfrx's timers afterwards.
-void documentTest(String description, Future<void> Function(WidgetTester tester) body) {
-  testWidgets(description, (tester) async {
-    tester.view.physicalSize = const Size(1000, 1600);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    await body(tester);
-    await drainBackgroundLoading(tester);
-  });
-}
-
 void main() {
-  setUpAll(() async {
-    TestWidgetsFlutterBinding.ensureInitialized();
-    Pdfrx.cacheDirectoryPath ??= Directory.systemTemp.createTempSync('pdfrx_test_cache').path;
-    await pdfrxFlutterInitialize();
-  });
+  setUpAll(initializePdfiumForTests);
 
   Future<void> pumpScreen(
     WidgetTester tester, {
@@ -244,6 +198,30 @@ void main() {
 
     await tester.tap(find.widgetWithText(FilledButton, 'Open PDF'));
     await pumpUntil(tester, find.text('3 / 3'));
+  });
+
+  documentTest('the viewer opens the page organiser on the current document', (tester) async {
+    await openSample(tester);
+
+    expect(
+      tester
+          .widget<IconButton>(
+            find.ancestor(
+              of: find.byTooltip('Organize pages'),
+              matching: find.byType(IconButton),
+            ),
+          )
+          .onPressed,
+      isNotNull,
+    );
+
+    await tester.tap(find.byTooltip('Organize pages'));
+    await pumpUntil(tester, find.byType(PageOrganizerScreen));
+    await pumpUntil(tester, find.byType(PageTile));
+
+    expect(find.byType(PageTile), findsNWidgets(3));
+    // The viewer's own document is untouched behind the organiser.
+    expect(find.text('Page 1 of sample.pdf'), findsOneWidget);
   });
 
   group('password-protected documents', () {

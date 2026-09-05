@@ -30,6 +30,18 @@ class PdfPicker {
     return toSource(picked);
   }
 
+  /// Opens the picker for several PDFs at once, for merging.
+  ///
+  /// Returns an empty list when the user cancels.
+  Future<List<PdfSource>> pickPdfs() async {
+    final picked = await FilePicker.pickFiles(
+      dialogTitle: 'Add PDFs',
+      type: FileType.custom,
+      allowedExtensions: const ['pdf'],
+    );
+    return [for (final file in picked) await toSource(file)];
+  }
+
   /// Converts a picked file into a [PdfSource].
   ///
   /// On Android the picker usually returns a content URI with no filesystem

@@ -3,6 +3,7 @@ import 'package:pdfrx/pdfrx.dart';
 
 import '../../../core/app_theme.dart';
 import '../../../core/view_preferences.dart';
+import '../../pages/ui/page_organizer_screen.dart';
 import '../logic/page_layout.dart';
 import '../logic/page_navigation.dart';
 import '../logic/pdfrx_layout_adapter.dart';
@@ -122,26 +123,30 @@ class _ViewerScreenState extends State<ViewerScreen> {
     try {
       final source = await widget.picker.pickPdf();
       if (!mounted || source == null) return;
-      final resumePage = await _lastPageStore.lastPage(source.key);
-      if (!mounted) return;
-      // Drop the previous document's searcher immediately: it is bound to a
-      // document that is about to go away. onViewerReady builds a new one.
-      _closeSearch();
-      _disposeSearcher();
-      setState(() {
-        _source = source;
-        _documentRef = _createDocumentRef(source);
-        _document = null;
-        _passwordAttempts = 0;
-        _initialPageNumber = resumePage ?? 1;
-        _pageNumber = _initialPageNumber;
-      });
+      await _openSource(source);
     } on Object catch (error) {
       if (!mounted) return;
       _showMessage('Could not open the PDF: $error');
     } finally {
       if (mounted) setState(() => _isOpening = false);
     }
+  }
+
+  Future<void> _openSource(PdfSource source) async {
+    final resumePage = await _lastPageStore.lastPage(source.key);
+    if (!mounted) return;
+    // Drop the previous document's searcher immediately: it is bound to a
+    // document that is about to go away. onViewerReady builds a new one.
+    _closeSearch();
+    _disposeSearcher();
+    setState(() {
+      _source = source;
+      _documentRef = _createDocumentRef(source);
+      _document = null;
+      _passwordAttempts = 0;
+      _initialPageNumber = resumePage ?? 1;
+      _pageNumber = _initialPageNumber;
+    });
   }
 
   PdfDocumentRef _createDocumentRef(PdfSource source) {
@@ -178,8 +183,39 @@ class _ViewerScreenState extends State<ViewerScreen> {
     _documentRef?.resolveListenable().load(forceReload: true);
   }
 
-  void _showMessage(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  /// Opens the page organiser on a copy of the current document.
+  ///
+  /// The organiser never edits the document the viewer is showing; it saves a
+  /// new file, which the viewer then offers to open.
+  Future<void> _organizePages(PdfSource source) async {
+    final saved = await Navigator.of(context).push<Uri>(
+      MaterialPageRoute(
+        builder: (context) => PageOrganizerScreen(source: source, picker: widget.picker),
+      ),
+    );
+    if (!mounted || saved == null) return;
+
+    final path = saved.isScheme('file') ? saved.toFilePath() : null;
+    _showMessage(
+      'Saved ${_fileNameOf(saved)}',
+      action: path == null
+          ? null
+          : SnackBarAction(
+              label: 'Open',
+              onPressed: () => _openSource(
+                PdfFileSource(path: path, displayName: _fileNameOf(saved)),
+              ),
+            ),
+    );
+  }
+
+  static String _fileNameOf(Uri uri) =>
+      uri.pathSegments.isEmpty ? uri.toString() : uri.pathSegments.last;
+
+  void _showMessage(String message, {SnackBarAction? action}) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), action: action),
+    );
   }
 
   // --- navigation ----------------------------------------------------------
@@ -357,6 +393,11 @@ class _ViewerScreenState extends State<ViewerScreen> {
             tooltip: 'Find in document',
             onPressed: _searcher == null ? null : _toggleSearch,
             icon: const Icon(Icons.search),
+          ),
+          IconButton(
+            tooltip: 'Organize pages',
+            onPressed: source == null ? null : () => _organizePages(source),
+            icon: const Icon(Icons.auto_awesome_motion_outlined),
           ),
           IconButton(
             tooltip: 'Open PDF',
