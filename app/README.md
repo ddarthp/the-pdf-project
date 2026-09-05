@@ -35,10 +35,15 @@ lib/
     ui/                        page organiser screen
   features/annotate/
     annotation_controller.dart state shared by the layer, toolbar and panel
-    logic/                     coordinate mapping, hit testing, text snapping
+    logic/                     coordinate mapping, hit testing, text snapping,
+                               resize handles, PDF geometry and appearances
     model/                     annotation types, tools, style
-    services/                  annotation store
+    services/                  annotation store, PDF annotation writer
     ui/                        drawing layer, painter, toolbar, panel
+  features/signature/
+    logic/                     cropping a drawing, placing it on a page
+    model/                     drawn, typed and image signatures
+    ui/                        the signature pad
 ```
 
 Each feature's `logic/` deliberately has no pdfrx imports so the maths is
@@ -62,6 +67,10 @@ API, which pdfrx exposes via `useNativeDocumentHandle`; the coordinate
 conversion it needs lives in `annotate/logic/pdf_page_geometry.dart` and the
 drawing instructions for the shapes PDFium will not draw itself in
 `annotate/logic/annotation_appearance.dart`.
+
+A signature is captured in `features/signature/` and then placed as a
+`SignatureAnnotation`, so it inherits the annotation feature's placement,
+selection, moving, resizing and export rather than repeating any of it.
 
 ## Commands
 

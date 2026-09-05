@@ -9,6 +9,7 @@ import 'package:pdfium_dart/pdfium_dart.dart' as pdfium_bindings;
 import 'package:pdfrx/pdfrx.dart';
 import 'package:the_pdf_project/features/annotate/model/annotation.dart';
 import 'package:the_pdf_project/features/annotate/services/pdf_annotation_writer.dart';
+import 'package:the_pdf_project/features/signature/model/signature_source.dart';
 
 import '../../../support/pdf_annotation_reader.dart';
 import '../../../support/pdfium_test_support.dart';
@@ -40,6 +41,43 @@ ShapeAnnotation shape(ShapeKind kind, {Offset? start, Offset? end}) => ShapeAnno
   end: end ?? const Offset(0.7, 0.6),
   strokeWidth: 3,
 );
+
+SignatureAnnotation signature(
+  SignatureSource source, {
+  Rect bounds = const Rect.fromLTRB(0.15, 0.6, 0.75, 0.75),
+}) => SignatureAnnotation(
+  id: 'signature',
+  pageNumber: 1,
+  color: const Color(0xFF1A237E),
+  opacity: 1,
+  createdAt: _createdAt,
+  bounds: bounds,
+  source: source,
+);
+
+const drawnSignature = DrawnSignature(
+  strokes: [
+    [Offset(0, 0.8), Offset(0.2, 0.1), Offset(0.4, 0.9), Offset(0.6, 0.2), Offset(1, 0.6)],
+  ],
+  strokeWidth: 0.02,
+  aspectRatio: 4,
+);
+
+/// A small opaque picture, standing in for a photo of a signature.
+Future<Uint8List> signaturePng() async {
+  final recorder = PictureRecorder();
+  Canvas(recorder).drawRect(
+    const Rect.fromLTWH(0, 0, 80, 20),
+    Paint()..color = const Color(0xFF102030),
+  );
+  final image = await recorder.endRecording().toImage(80, 20);
+  try {
+    final data = await image.toByteData(format: ImageByteFormat.png);
+    return data!.buffer.asUint8List();
+  } finally {
+    image.dispose();
+  }
+}
 
 void main() {
   const writer = PdfAnnotationWriter();
@@ -230,6 +268,64 @@ void main() {
     });
   });
 
+  group('signatures', () {
+    test('a drawn signature stays vector, as strokes in its appearance', () async {
+      final written = await exportAndRead([signature(drawnSignature)]);
+
+      final annotation = written.single;
+      expect(annotation.subtype, pdfium_bindings.FPDF_ANNOT_STAMP);
+      // Path operators, not an image: a signature is the thing most likely to
+      // be printed, so it is worth keeping sharp.
+      expect(annotation.appearance, contains(' m\n'));
+      expect(annotation.appearance, contains(' l\n'));
+      expect(annotation.appearance, isNot(contains('Do')));
+      // Drawn in the signature's own colour.
+      expect(annotation.appearance, contains('0.102 0.137 0.494 RG'));
+    });
+
+    test('a drawn signature lands where it was placed', () async {
+      final written = await exportAndRead([
+        signature(drawnSignature, bounds: const Rect.fromLTRB(0.2, 0.6, 0.6, 0.7)),
+      ]);
+
+      final annotation = written.single;
+      // A4 is 595 x 842 points, and y is measured up from the bottom, so the
+      // box sits in the lower half of the page.
+      expect(annotation.left, closeTo(595 * 0.2, 8));
+      expect(annotation.right, closeTo(595 * 0.6, 8));
+      expect(annotation.top, closeTo(842 * 0.4, 8));
+      expect(annotation.bottom, closeTo(842 * 0.3, 8));
+    });
+
+    test('a typed signature becomes a picture carrying the name behind it', () async {
+      final written = await exportAndRead([
+        signature(
+          const TypedSignature(
+            text: 'Ada Lovelace',
+            typeface: SignatureTypeface.flowing,
+            aspectRatio: 4,
+          ),
+        ),
+      ]);
+
+      final annotation = written.single;
+      expect(annotation.subtype, pdfium_bindings.FPDF_ANNOT_STAMP);
+      expect(annotation.appearance, contains('Do'));
+      // Readable in a viewer's comment list even though it is drawn.
+      expect(annotation.contents, 'Ada Lovelace');
+    });
+
+    test('an image signature becomes a picture on the page', () async {
+      final written = await exportAndRead([
+        signature(ImageSignature(bytes: await signaturePng(), aspectRatio: 4)),
+      ]);
+
+      final annotation = written.single;
+      expect(annotation.subtype, pdfium_bindings.FPDF_ANNOT_STAMP);
+      expect(annotation.appearance, contains('Do'));
+    });
+  });
+
   group('across the document', () {
     test('annotations land on the pages they belong to', () async {
       final result = await writer.export(await openFixture(), [
@@ -390,6 +486,14 @@ void main() {
         createdAt: _createdAt,
         anchor: const Offset(0.5, 0.5),
         text: 'note',
+      ),
+      'drawn signature': signature(drawnSignature),
+      'typed signature': signature(
+        const TypedSignature(
+          text: 'Ada Lovelace',
+          typeface: SignatureTypeface.flowing,
+          aspectRatio: 4,
+        ),
       ),
       'text box': TextBoxAnnotation(
         id: 't',

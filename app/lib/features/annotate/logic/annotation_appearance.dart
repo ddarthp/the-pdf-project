@@ -56,6 +56,29 @@ abstract final class AnnotationAppearance {
     return AppearanceStream(content: buffer.toString(), extent: [from, to, ...barbs]);
   }
 
+  /// Freehand strokes, in PDF page coordinates.
+  ///
+  /// Used for a drawn signature, which stays vector rather than being turned
+  /// into pixels — a signature is the thing most likely to end up printed.
+  static AppearanceStream strokes({
+    required List<List<Offset>> strokes,
+    required Color color,
+    required double strokeWidth,
+  }) {
+    final buffer = StringBuffer();
+    _begin(buffer, color, strokeWidth);
+    final extent = <Offset>[];
+    for (final stroke in strokes) {
+      if (stroke.isEmpty) continue;
+      // A single point is a dot; a zero-length line draws nothing, so give it
+      // somewhere to go.
+      _stroke(buffer, stroke.length == 1 ? [stroke.first, stroke.first.translate(0.01, 0)] : stroke);
+      extent.addAll(stroke);
+    }
+    _end(buffer);
+    return AppearanceStream(content: buffer.toString(), extent: extent);
+  }
+
   /// The two barb tips of an arrowhead pointing from [from] towards [to].
   ///
   /// Shared with the on-screen painter's geometry so an exported arrow looks

@@ -2,6 +2,7 @@ import 'dart:ui';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:the_pdf_project/features/annotate/model/annotation.dart';
+import 'package:the_pdf_project/features/signature/model/signature_source.dart';
 
 final _createdAt = DateTime.utc(2026, 9, 5, 12, 30);
 
@@ -47,6 +48,21 @@ final samples = <String, Annotation>{
     bounds: const Rect.fromLTRB(0.1, 0.1, 0.6, 0.2),
     text: 'remember this',
     fontSize: 12,
+  ),
+  'signature': SignatureAnnotation(
+    id: 'a6',
+    pageNumber: 2,
+    color: const Color(0xFF000000),
+    opacity: 1,
+    createdAt: _createdAt,
+    bounds: const Rect.fromLTRB(0.2, 0.6, 0.6, 0.7),
+    source: const DrawnSignature(
+      strokes: [
+        [Offset(0, 0), Offset(1, 1)],
+      ],
+      strokeWidth: 0.01,
+      aspectRatio: 3,
+    ),
   ),
   'stickyNote': StickyNoteAnnotation(
     id: 'a5',
@@ -145,6 +161,57 @@ void main() {
     });
   });
 
+  group('resizedTo', () {
+    test('stretches ink onto the new bounds', () {
+      final resized = samples['ink']!.resizedTo(const Rect.fromLTRB(0, 0, 1, 1));
+
+      // The old bounds were 0.1-0.5 across and 0.2-0.6 down; the corners of
+      // the drawing land on the corners of the new box.
+      expect(resized.normalizedBounds, const Rect.fromLTRB(0, 0, 1, 1));
+      expect((resized as InkAnnotation).strokes[0][0], const Offset(0, 0));
+    });
+
+    test('stretches both ends of a shape', () {
+      final resized = samples['shape']!.resizedTo(const Rect.fromLTRB(0, 0, 0.5, 0.5));
+
+      expect(resized.normalizedBounds.width, closeTo(0.5, 1e-9));
+      expect(resized.normalizedBounds.height, closeTo(0.5, 1e-9));
+    });
+
+    test('moves a text box and a signature to exactly the new box', () {
+      const bounds = Rect.fromLTRB(0.1, 0.2, 0.9, 0.4);
+
+      expect(samples['textBox']!.resizedTo(bounds).normalizedBounds, bounds);
+      expect(samples['signature']!.resizedTo(bounds).normalizedBounds, bounds);
+    });
+
+    test('leaves a sticky note alone, since a pin has no size', () {
+      final note = samples['stickyNote']!;
+
+      expect(note.resizedTo(const Rect.fromLTRB(0, 0, 1, 1)), same(note));
+    });
+
+    test('survives an annotation that has no extent to stretch from', () {
+      final flat = InkAnnotation(
+        id: 'flat',
+        pageNumber: 1,
+        color: const Color(0xFF000000),
+        opacity: 1,
+        createdAt: _createdAt,
+        strokes: const [
+          [Offset(0.5, 0.5), Offset(0.5, 0.5)],
+        ],
+        strokeWidth: 3,
+      );
+
+      final resized = flat.resizedTo(const Rect.fromLTRB(0.1, 0.1, 0.4, 0.4));
+
+      for (final point in resized.strokes.single) {
+        expect(point, const Offset(0.1, 0.1));
+      }
+    });
+  });
+
   group('normalizedBounds', () {
     test('wraps every ink point', () {
       expect(samples['ink']!.normalizedBounds, const Rect.fromLTRB(0.1, 0.2, 0.5, 0.6));
@@ -171,6 +238,7 @@ void main() {
     test('falls back to the kind of thing it is', () {
       expect(samples['ink']!.summary, 'Drawing');
       expect(samples['shape']!.summary, 'Arrow');
+      expect(samples['signature']!.summary, 'Signature (drawn)');
     });
   });
 }

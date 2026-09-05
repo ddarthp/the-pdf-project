@@ -2,6 +2,8 @@ import 'dart:ui';
 
 import 'package:flutter/foundation.dart';
 
+import '../../signature/model/signature_source.dart';
+
 /// Shapes a [ShapeAnnotation] can take.
 enum ShapeKind { rectangle, ellipse, line, arrow }
 
@@ -43,6 +45,24 @@ sealed class Annotation {
 
   /// The same annotation shifted by [delta] in normalised page space.
   Annotation movedBy(Offset delta);
+
+  /// The same annotation stretched so its bounds become [bounds].
+  ///
+  /// Every geometry point is mapped through the same change of rectangle, so
+  /// dragging a corner handle reshapes ink, shapes and signatures alike. An
+  /// annotation with nothing to stretch — a sticky note is a pin, not a box —
+  /// returns itself unchanged.
+  Annotation resizedTo(Rect bounds);
+
+  /// Maps a point from [from] onto [to], for [resizedTo].
+  ///
+  /// A rectangle with no width or height cannot be stretched from, so the
+  /// point is carried across by its offset instead of being scaled.
+  @protected
+  static Offset rescale(Offset point, Rect from, Rect to) => Offset(
+    from.width == 0 ? to.left : to.left + (point.dx - from.left) / from.width * to.width,
+    from.height == 0 ? to.top : to.top + (point.dy - from.top) / from.height * to.height,
+  );
 
   /// The same annotation restyled, for editing an existing one.
   Annotation restyled({Color? color, double? opacity, double? strokeWidth});
@@ -124,6 +144,15 @@ sealed class Annotation {
         anchor: _offsetFromJson(json['anchor']! as List<Object?>),
         text: json['text'] as String,
       ),
+      'signature' => SignatureAnnotation(
+        id: id,
+        pageNumber: pageNumber,
+        color: color,
+        opacity: opacity,
+        createdAt: createdAt,
+        bounds: _rectFromJson(json['bounds']! as List<Object?>),
+        source: SignatureSource.fromJson(json['source']! as Map<String, Object?>),
+      ),
       _ => throw FormatException('Unknown annotation type: $type'),
     };
   }
@@ -183,6 +212,17 @@ class InkAnnotation extends Annotation {
       for (final stroke in strokes) [for (final point in stroke) point + delta],
     ],
   );
+
+  @override
+  InkAnnotation resizedTo(Rect bounds) {
+    final from = normalizedBounds;
+    return _copyWith(
+      strokes: [
+        for (final stroke in strokes)
+          [for (final point in stroke) Annotation.rescale(point, from, bounds)],
+      ],
+    );
+  }
 
   @override
   InkAnnotation restyled({Color? color, double? opacity, double? strokeWidth}) =>
@@ -250,6 +290,15 @@ class ShapeAnnotation extends Annotation {
   ShapeAnnotation movedBy(Offset delta) => _copyWith(start: start + delta, end: end + delta);
 
   @override
+  ShapeAnnotation resizedTo(Rect bounds) {
+    final from = normalizedBounds;
+    return _copyWith(
+      start: Annotation.rescale(start, from, bounds),
+      end: Annotation.rescale(end, from, bounds),
+    );
+  }
+
+  @override
   ShapeAnnotation restyled({Color? color, double? opacity, double? strokeWidth}) =>
       _copyWith(color: color, opacity: opacity, strokeWidth: strokeWidth);
 
@@ -311,6 +360,20 @@ class HighlightAnnotation extends Annotation {
       _copyWith(bands: [for (final band in bands) band.shift(delta)]);
 
   @override
+  HighlightAnnotation resizedTo(Rect bounds) {
+    final from = normalizedBounds;
+    return _copyWith(
+      bands: [
+        for (final band in bands)
+          Rect.fromPoints(
+            Annotation.rescale(band.topLeft, from, bounds),
+            Annotation.rescale(band.bottomRight, from, bounds),
+          ),
+      ],
+    );
+  }
+
+  @override
   HighlightAnnotation restyled({Color? color, double? opacity, double? strokeWidth}) =>
       _copyWith(color: color, opacity: opacity);
 
@@ -361,6 +424,9 @@ class TextBoxAnnotation extends Annotation {
 
   @override
   TextBoxAnnotation movedBy(Offset delta) => _copyWith(bounds: bounds.shift(delta));
+
+  @override
+  TextBoxAnnotation resizedTo(Rect bounds) => _copyWith(bounds: bounds);
 
   @override
   TextBoxAnnotation restyled({Color? color, double? opacity, double? strokeWidth}) => _copyWith(
@@ -433,6 +499,10 @@ class StickyNoteAnnotation extends Annotation {
   @override
   StickyNoteAnnotation movedBy(Offset delta) => _copyWith(anchor: anchor + delta);
 
+  /// A note is pinned to a point, so there is nothing to stretch.
+  @override
+  StickyNoteAnnotation resizedTo(Rect bounds) => this;
+
   @override
   StickyNoteAnnotation restyled({Color? color, double? opacity, double? strokeWidth}) =>
       _copyWith(color: color, opacity: opacity);
@@ -464,5 +534,66 @@ class StickyNoteAnnotation extends Annotation {
     'type': 'stickyNote',
     'anchor': Annotation._offsetToJson(anchor),
     'text': text,
+  };
+}
+
+/// A signature placed on a page.
+///
+/// However it was made — drawn, typed or picked from a picture — a signature
+/// is one object sitting in a rectangle, so it rides on the same placement,
+/// selection and export machinery as every other annotation. The [source]
+/// only decides how it is drawn.
+class SignatureAnnotation extends Annotation {
+  const SignatureAnnotation({
+    required super.id,
+    required super.pageNumber,
+    required super.color,
+    required super.opacity,
+    required super.createdAt,
+    required this.bounds,
+    required this.source,
+  });
+
+  final Rect bounds;
+  final SignatureSource source;
+
+  @override
+  Rect get normalizedBounds => bounds;
+
+  @override
+  String get summary => switch (source) {
+    TypedSignature(:final text) => 'Signature: $text',
+    DrawnSignature() => 'Signature (drawn)',
+    ImageSignature() => 'Signature (image)',
+  };
+
+  @override
+  SignatureAnnotation movedBy(Offset delta) => _copyWith(bounds: bounds.shift(delta));
+
+  @override
+  SignatureAnnotation resizedTo(Rect bounds) => _copyWith(bounds: bounds);
+
+  /// A signature keeps the colour it was captured in; only its opacity and
+  /// placement are worth changing afterwards.
+  @override
+  SignatureAnnotation restyled({Color? color, double? opacity, double? strokeWidth}) =>
+      _copyWith(opacity: opacity);
+
+  SignatureAnnotation _copyWith({Rect? bounds, double? opacity}) => SignatureAnnotation(
+    id: id,
+    pageNumber: pageNumber,
+    color: color,
+    opacity: opacity ?? this.opacity,
+    createdAt: createdAt,
+    bounds: bounds ?? this.bounds,
+    source: source,
+  );
+
+  @override
+  Map<String, Object?> toJson() => {
+    ...super._baseJson,
+    'type': 'signature',
+    'bounds': Annotation._rectToJson(bounds),
+    'source': source.toJson(),
   };
 }

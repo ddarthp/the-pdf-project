@@ -39,6 +39,7 @@ class AnnotationToolbar extends StatelessWidget {
     AnnotationTool.arrow: Icons.north_east,
     AnnotationTool.textBox: Icons.text_fields,
     AnnotationTool.stickyNote: Icons.sticky_note_2_outlined,
+    AnnotationTool.signature: Icons.draw,
     AnnotationTool.eraser: Icons.auto_fix_normal,
   };
 

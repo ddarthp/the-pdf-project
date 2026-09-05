@@ -82,6 +82,7 @@ abstract final class AnnotationHitTest {
         return bands.any((band) => toDocRect(band).inflate(tolerance).contains(documentPoint));
 
       case TextBoxAnnotation(:final bounds):
+      case SignatureAnnotation(:final bounds):
         return toDocRect(bounds).inflate(tolerance).contains(documentPoint);
 
       case StickyNoteAnnotation(:final anchor):

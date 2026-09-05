@@ -14,6 +14,9 @@ import '../../annotate/ui/annotation_text_dialog.dart';
 import '../../annotate/ui/annotation_toolbar.dart';
 import '../../annotate/ui/annotations_panel.dart';
 import '../../pages/services/pdf_saver.dart';
+import '../../signature/model/signature_source.dart';
+import '../../signature/ui/signature_image_picker.dart';
+import '../../signature/ui/signature_pad_sheet.dart';
 import '../../pages/ui/page_organizer_screen.dart';
 import '../logic/page_layout.dart';
 import '../logic/page_navigation.dart';
@@ -41,6 +44,7 @@ class ViewerScreen extends StatefulWidget {
     this.annotationStore,
     this.saver = const PdfSaver(),
     this.annotationWriter = const PdfAnnotationWriter(),
+    this.signatureImagePicker = const SignatureImagePicker(),
     super.key,
   });
 
@@ -60,6 +64,9 @@ class ViewerScreen extends StatefulWidget {
 
   /// Turns the app's annotations into real PDF annotations.
   final PdfAnnotationWriter annotationWriter;
+
+  /// Picks a photo or scan of a signature.
+  final SignatureImagePicker signatureImagePicker;
 
   @override
   State<ViewerScreen> createState() => _ViewerScreenState();
@@ -413,6 +420,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
               controller: _annotations,
               viewer: _controller,
               requestText: _requestAnnotationText,
+              requestSignature: _requestSignature,
             ),
           ),
         ],
@@ -424,6 +432,12 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   Future<String?> _requestAnnotationText({required String title, required String? initialText}) =>
       showAnnotationTextDialog(context, title: title, initialText: initialText);
+
+  Future<SignatureSource?> _requestSignature() => showSignaturePad(
+    context,
+    color: _annotations.style.color,
+    picker: widget.signatureImagePicker,
+  );
 
   /// Re-opens the text of a note or text box and writes the edit back.
   Future<void> _editAnnotationText(Annotation annotation) async {

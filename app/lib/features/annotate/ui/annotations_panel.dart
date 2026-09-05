@@ -133,6 +133,7 @@ class _AnnotationRow extends StatelessWidget {
     HighlightAnnotation() => Icons.highlight_alt_outlined,
     TextBoxAnnotation() => Icons.text_fields,
     StickyNoteAnnotation() => Icons.sticky_note_2_outlined,
+    SignatureAnnotation() => Icons.draw,
     ShapeAnnotation(:final kind) => switch (kind) {
       ShapeKind.rectangle => Icons.crop_square,
       ShapeKind.ellipse => Icons.circle_outlined,
@@ -146,6 +147,7 @@ class _AnnotationRow extends StatelessWidget {
     HighlightAnnotation() => 'Highlight',
     TextBoxAnnotation() => 'Text box',
     StickyNoteAnnotation() => 'Sticky note',
+    SignatureAnnotation() => 'Signature',
     ShapeAnnotation() => annotation.summary,
   };
 }

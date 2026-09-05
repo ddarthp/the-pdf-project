@@ -15,6 +15,7 @@ enum AnnotationTool {
   arrow('Arrow'),
   textBox('Text box'),
   stickyNote('Sticky note'),
+  signature('Signature'),
 
   /// Tap an annotation to remove it.
   eraser('Eraser');

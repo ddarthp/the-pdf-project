@@ -3,17 +3,24 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 
+import '../../signature/logic/signature_geometry.dart';
+import '../../signature/model/signature_source.dart';
 import '../annotation_controller.dart';
 import '../logic/annotation_hit_test.dart';
 import '../logic/page_coordinates.dart';
+import '../logic/resize_handles.dart';
 import '../logic/text_highlight.dart';
 import '../model/annotation.dart';
 import '../model/annotation_tool.dart';
 import 'annotation_painter.dart';
+import 'signature_image_cache.dart';
 
 /// Asks the reader for the text of a note or text box.
 typedef AnnotationTextRequest =
     Future<String?> Function({required String title, required String? initialText});
+
+/// Asks the reader for a signature to place.
+typedef AnnotationSignatureRequest = Future<SignatureSource?> Function();
 
 /// Draws annotations over the viewer and turns touches into new ones.
 ///
@@ -28,12 +35,14 @@ class AnnotationLayer extends StatefulWidget {
     required this.controller,
     required this.viewer,
     required this.requestText,
+    required this.requestSignature,
     super.key,
   });
 
   final AnnotationController controller;
   final PdfViewerController viewer;
   final AnnotationTextRequest requestText;
+  final AnnotationSignatureRequest requestSignature;
 
   /// How close a touch has to be to an annotation to count, in logical pixels.
   static const hitTolerance = 12.0;
@@ -53,16 +62,20 @@ class _AnnotationLayerState extends State<AnnotationLayer> {
   final _pageTextByPage = <int, String>{};
   final _pageTextLoads = <int, Future<void>>{};
 
+  final _signatureImages = SignatureImageCache();
+
   int? _activePage;
   Offset? _dragStart;
   Offset? _dragOrigin;
   List<Offset> _inkPoints = const [];
   String? _movingId;
+  ResizeHandle? _resizeHandle;
 
   @override
   void initState() {
     super.initState();
     widget.controller.addListener(_onControllerChanged);
+    _signatureImages.sync(widget.controller.annotations);
   }
 
   @override
@@ -77,12 +90,14 @@ class _AnnotationLayerState extends State<AnnotationLayer> {
   @override
   void dispose() {
     widget.controller.removeListener(_onControllerChanged);
+    _signatureImages.dispose();
     super.dispose();
   }
 
   /// Rebuilds only for changes that alter how pointers are handled; painting
   /// is driven by the painter's own repaint listenable.
   void _onControllerChanged() {
+    _signatureImages.sync(widget.controller.annotations);
     if (mounted) setState(() {});
   }
 
@@ -148,6 +163,13 @@ class _AnnotationLayerState extends State<AnnotationLayer> {
         return;
 
       case AnnotationTool.select:
+        // A corner of what is already selected resizes it; anywhere else
+        // picks something up.
+        final handle = _resizeHandleAt(target, event.localPosition);
+        if (handle != null) {
+          _resizeHandle = handle;
+          return;
+        }
         final hit = _hitTest(target, event.localPosition);
         controller.select(hit?.id);
         _movingId = hit?.id;
@@ -162,6 +184,9 @@ class _AnnotationLayerState extends State<AnnotationLayer> {
 
       case AnnotationTool.stickyNote:
         unawaited(_createStickyNote(target.pageNumber, normalized));
+
+      case AnnotationTool.signature:
+        unawaited(_placeSignature(target, normalized));
 
       case AnnotationTool.highlight:
       case AnnotationTool.rectangle:
@@ -188,6 +213,17 @@ class _AnnotationLayerState extends State<AnnotationLayer> {
         return;
 
       case AnnotationTool.select:
+        final handle = _resizeHandle;
+        if (handle != null) {
+          final selected = controller.selected;
+          if (selected == null) return;
+          controller.replace(
+            selected.resizedTo(
+              ResizeHandles.resize(selected.normalizedBounds, handle, normalized),
+            ),
+          );
+          return;
+        }
         if (_movingId == null || _dragOrigin == null) return;
         controller.moveSelectedBy(normalized - _dragOrigin!);
         _dragOrigin = normalized;
@@ -206,6 +242,7 @@ class _AnnotationLayerState extends State<AnnotationLayer> {
         controller.setDraft(_buildInk(pageNumber, _inkPoints));
 
       case AnnotationTool.stickyNote:
+      case AnnotationTool.signature:
         return;
 
       case AnnotationTool.highlight:
@@ -227,6 +264,7 @@ class _AnnotationLayerState extends State<AnnotationLayer> {
     _dragStart = null;
     _dragOrigin = null;
     _movingId = null;
+    _resizeHandle = null;
     if (pageNumber == null) return;
 
     switch (controller.tool) {
@@ -234,6 +272,7 @@ class _AnnotationLayerState extends State<AnnotationLayer> {
       case AnnotationTool.select:
       case AnnotationTool.eraser:
       case AnnotationTool.stickyNote:
+      case AnnotationTool.signature:
         return;
 
       case AnnotationTool.ink:
@@ -275,8 +314,63 @@ class _AnnotationLayerState extends State<AnnotationLayer> {
     _dragStart = null;
     _dragOrigin = null;
     _movingId = null;
+    _resizeHandle = null;
     _inkPoints = const [];
     widget.controller.setDraft(null);
+  }
+
+  /// The resize handle of the selected annotation under a touch, if any.
+  ///
+  /// Only the selection has handles, and only on its own page. Measured in
+  /// this widget's own space rather than document space, because that is
+  /// where the painter draws the handles — a fixed few pixels outside the
+  /// annotation however far the page is zoomed.
+  ResizeHandle? _resizeHandleAt(
+    ({int pageNumber, Rect pageRect, PdfPage page}) target,
+    Offset localPosition,
+  ) {
+    final selected = widget.controller.selected;
+    if (selected == null || selected.pageNumber != target.pageNumber) return null;
+    if (!widget.viewer.isReady) return null;
+
+    final onPage = PageCoordinates.rectToDocument(selected.normalizedBounds, target.pageRect);
+    final onScreen = Rect.fromPoints(
+      widget.viewer.documentToLocal(onPage.topLeft),
+      widget.viewer.documentToLocal(onPage.bottomRight),
+    );
+    return ResizeHandles.at(onScreen, localPosition, AnnotationLayer.hitTolerance);
+  }
+
+  /// Asks for a signature and drops it where the reader tapped.
+  Future<void> _placeSignature(
+    ({int pageNumber, Rect pageRect, PdfPage page}) target,
+    Offset at,
+  ) async {
+    final controller = widget.controller;
+    final source = await widget.requestSignature();
+    if (!mounted || source == null) return;
+
+    controller.add(
+      SignatureAnnotation(
+        id: controller.newId(),
+        pageNumber: target.pageNumber,
+        color: controller.style.color,
+        opacity: controller.style.opacity,
+        createdAt: DateTime.now(),
+        bounds: SignatureGeometry.placementBounds(
+          at: at,
+          aspectRatio: source.aspectRatio,
+          pageAspectRatio: target.page.height <= 0
+              ? 1
+              : target.page.width / target.page.height,
+        ),
+        source: source,
+      ),
+    );
+    // Straight into the select tool, so it can be nudged and resized without
+    // dropping another one by accident.
+    controller.tool = AnnotationTool.select;
+    controller.select(controller.annotations.last.id);
   }
 
   Annotation? _hitTest(({int pageNumber, Rect pageRect, PdfPage page}) target, Offset localPosition) {
@@ -515,6 +609,7 @@ class _AnnotationLayerState extends State<AnnotationLayer> {
           painter: _AnnotationLayerPainter(
             controller: controller,
             viewer: widget.viewer,
+            signatureImages: _signatureImages,
             selectionColor: Theme.of(context).colorScheme.primary,
           ),
           size: Size.infinite,
@@ -529,11 +624,13 @@ class _AnnotationLayerPainter extends CustomPainter {
   _AnnotationLayerPainter({
     required this.controller,
     required this.viewer,
+    required this.signatureImages,
     required this.selectionColor,
-  }) : super(repaint: Listenable.merge([controller, viewer]));
+  }) : super(repaint: Listenable.merge([controller, viewer, signatureImages]));
 
   final AnnotationController controller;
   final PdfViewerController viewer;
+  final SignatureImageCache signatureImages;
   final Color selectionColor;
 
   @override
@@ -560,6 +657,7 @@ class _AnnotationLayerPainter extends CustomPainter {
           pageWidthInPoints: pages[i].width,
           isSelected: annotation.id == controller.selectedId,
           selectionColor: selectionColor,
+          signatureImage: signatureImages.imageFor,
         );
       }
       canvas.restore();

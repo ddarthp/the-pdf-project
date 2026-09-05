@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../../signature/model/signature_source.dart';
 import '../logic/page_coordinates.dart';
 import '../model/annotation.dart';
 
@@ -16,6 +17,9 @@ abstract final class AnnotationPainter {
   /// Size of a selection handle, in logical pixels of the target canvas.
   static const handleRadius = 5.0;
 
+  /// Looks up the decoded picture for an image signature.
+  static ui.Image? _noImages(String annotationId) => null;
+
   static void paint(
     Canvas canvas,
     Annotation annotation, {
@@ -23,6 +27,7 @@ abstract final class AnnotationPainter {
     required double pageWidthInPoints,
     required bool isSelected,
     required Color selectionColor,
+    ui.Image? Function(String annotationId) signatureImage = _noImages,
   }) {
     Offset toDoc(Offset normalized) => PageCoordinates.toDocument(normalized, pageRect);
     Rect toDocRect(Rect normalized) => PageCoordinates.rectToDocument(normalized, pageRect);
@@ -123,12 +128,110 @@ abstract final class AnnotationPainter {
             rulePaint,
           );
         }
+
+      case SignatureAnnotation(:final source, :final bounds):
+        _paintSignature(
+          canvas,
+          source,
+          toDocRect(bounds),
+          color: annotation.color,
+          opacity: annotation.opacity,
+          image: signatureImage(annotation.id),
+        );
     }
 
     if (isSelected) {
       _paintSelection(canvas, toDocRect(annotation.normalizedBounds), selectionColor);
     }
   }
+
+  /// Draws a signature stretched to fill [rect], whichever way it was made.
+  static void _paintSignature(
+    Canvas canvas,
+    SignatureSource source,
+    Rect rect, {
+    required Color color,
+    required double opacity,
+    required ui.Image? image,
+  }) {
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    switch (source) {
+      case DrawnSignature(:final strokes, :final strokeWidth):
+        final paint = Paint()
+          ..color = color.withValues(alpha: opacity)
+          ..style = PaintingStyle.stroke
+          // The width is a fraction of the signature, so it grows and shrinks
+          // with it rather than staying a fixed size on the page.
+          ..strokeWidth = math.max(strokeWidth * rect.width, 0.2)
+          ..strokeCap = StrokeCap.round
+          ..strokeJoin = StrokeJoin.round;
+        for (final stroke in strokes) {
+          if (stroke.isEmpty) continue;
+          Offset at(Offset point) =>
+              Offset(rect.left + point.dx * rect.width, rect.top + point.dy * rect.height);
+          if (stroke.length == 1) {
+            canvas.drawCircle(at(stroke.first), paint.strokeWidth / 2, Paint()..color = paint.color);
+            continue;
+          }
+          final path = Path()..moveTo(at(stroke.first).dx, at(stroke.first).dy);
+          for (final point in stroke.skip(1)) {
+            path.lineTo(at(point).dx, at(point).dy);
+          }
+          canvas.drawPath(path, paint);
+        }
+
+      case TypedSignature(:final text, :final typeface):
+        final painter = TextPainter(
+          text: TextSpan(text: text, style: typedSignatureStyle(typeface, color, opacity)),
+          textDirection: ui.TextDirection.ltr,
+        )..layout();
+        if (painter.width <= 0 || painter.height <= 0) return;
+        // Laid out once at a nominal size, then stretched onto the rectangle,
+        // so the lettering fills the signature exactly however it is resized.
+        canvas.save();
+        canvas.translate(rect.left, rect.top);
+        canvas.scale(rect.width / painter.width, rect.height / painter.height);
+        painter.paint(canvas, Offset.zero);
+        canvas.restore();
+        painter.dispose();
+
+      case ImageSignature():
+        if (image == null) {
+          // Still decoding: show where it will land rather than a blank gap.
+          canvas.drawRect(
+            rect,
+            Paint()
+              ..color = const Color(0x33000000)
+              ..style = PaintingStyle.stroke
+              ..strokeWidth = 1,
+          );
+          return;
+        }
+        canvas.drawImageRect(
+          image,
+          Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble()),
+          rect,
+          Paint()
+            ..filterQuality = FilterQuality.medium
+            ..color = const Color(0xFFFFFFFF).withValues(alpha: opacity),
+        );
+    }
+  }
+
+  /// The lettering of a typed signature, at the nominal size it is laid out
+  /// before being stretched onto the page.
+  static TextStyle typedSignatureStyle(
+    SignatureTypeface typeface,
+    Color color,
+    double opacity,
+  ) => TextStyle(
+    color: color.withValues(alpha: opacity),
+    fontSize: 96,
+    fontStyle: typeface.fontStyle,
+    fontWeight: typeface.fontWeight,
+    fontFamilyFallback: typeface.familyFallback,
+  );
 
   static void _paintArrowHead(Canvas canvas, Offset from, Offset to, Paint paint, double width) {
     final direction = to - from;

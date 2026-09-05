@@ -7,9 +7,11 @@ import 'package:flutter/painting.dart';
 import 'package:pdfium_dart/pdfium_dart.dart' as pdfium_bindings;
 import 'package:pdfrx/pdfrx.dart';
 
+import '../../signature/model/signature_source.dart';
 import '../logic/annotation_appearance.dart';
 import '../logic/pdf_page_geometry.dart';
 import '../model/annotation.dart';
+import '../ui/annotation_painter.dart';
 
 /// Writes the app's annotations into a PDF as real PDF annotations.
 ///
@@ -19,21 +21,22 @@ import '../model/annotation.dart';
 ///
 /// PDFium builds appearance streams itself for ink, square, circle, highlight
 /// and text notes, so those five map straight onto native subtypes. Lines,
-/// arrows and text boxes have no such subtype available and carry an explicit
-/// appearance instead — see [_writeLine] and [_writeTextBox].
+/// arrows, text boxes and signatures have no such subtype available and carry
+/// an explicit appearance instead — see [_writeLine], [_writeRasterStamp] and
+/// [_writeDrawnSignature].
 class PdfAnnotationWriter {
   const PdfAnnotationWriter();
 
   /// How many of each annotation was written, for reporting back.
   static const _unsupported = -1;
 
-  /// Text is drawn this many times larger than the page, then scaled down, so
-  /// it stays sharp under zoom.
-  static const _textRasterScale = 4.0;
+  /// Pictures are drawn this many times larger than the page, then scaled
+  /// down, so they stay sharp under zoom.
+  static const _rasterScale = 4.0;
 
-  /// A ceiling on the drawn size, so a full-page text box cannot allocate an
+  /// A ceiling on the drawn size, so a full-page annotation cannot allocate an
   /// unreasonable bitmap.
-  static const _maxTextRasterSide = 4000;
+  static const _maxRasterSide = 4000;
 
   /// Writes [annotations] into [document] and encodes the result.
   ///
@@ -62,17 +65,26 @@ class PdfAnnotationWriter {
       );
     }
 
-    // Text has to be drawn before crossing into FFI; see [_writeTextBox].
-    final texts = <String, _TextRaster>{};
-    for (final annotation in annotations.whereType<TextBoxAnnotation>()) {
-      final geometry = geometryByPage[annotation.pageNumber];
-      if (geometry == null) continue;
-      final raster = await _rasterizeText(annotation, geometry);
-      if (raster != null) texts[annotation.id] = raster;
+    // Anything drawn with Flutter has to become pixels before crossing into
+    // FFI; see [_writeRasterStamp].
+    final images = await _decodeSignatureImages(annotations);
+    final rasters = <String, _AnnotationRaster>{};
+    try {
+      for (final annotation in annotations) {
+        if (!_needsRaster(annotation)) continue;
+        final geometry = geometryByPage[annotation.pageNumber];
+        if (geometry == null) continue;
+        final raster = await _rasterize(annotation, geometry, images);
+        if (raster != null) rasters[annotation.id] = raster;
+      }
+    } finally {
+      for (final image in images.values) {
+        image.dispose();
+      }
     }
 
     final written = await document.useNativeDocumentHandle(
-      (handle) => _writeAll(handle, byPage, geometryByPage, texts),
+      (handle) => _writeAll(handle, byPage, geometryByPage, rasters),
     );
     final bytes = await document.encodePdf();
     return PdfAnnotationExport(bytes: bytes, written: written, total: annotations.length);
@@ -82,7 +94,7 @@ class PdfAnnotationWriter {
     int handle,
     Map<int, List<Annotation>> byPage,
     Map<int, PdfPageGeometry> geometryByPage,
-    Map<String, _TextRaster> texts,
+    Map<String, _AnnotationRaster> rasters,
   ) {
     final pdfium = pdfium_bindings.getPdfium(modulePath: Pdfrx.pdfiumModulePath);
     final nativeDocument = pdfium_bindings.FPDF_DOCUMENT.fromAddress(handle);
@@ -96,7 +108,7 @@ class PdfAnnotationWriter {
       if (page == nullptr) continue;
       try {
         for (final annotation in entry.value) {
-          if (_write(pdfium, nativeDocument, page, geometry, annotation, texts) !=
+          if (_write(pdfium, nativeDocument, page, geometry, annotation, rasters) !=
               _unsupported) {
             written++;
           }
@@ -117,20 +129,35 @@ class PdfAnnotationWriter {
     pdfium_bindings.FPDF_PAGE page,
     PdfPageGeometry geometry,
     Annotation annotation,
-    Map<String, _TextRaster> texts,
+    Map<String, _AnnotationRaster> rasters,
   ) {
     return switch (annotation) {
       InkAnnotation() => _writeInk(pdfium, page, geometry, annotation),
       HighlightAnnotation() => _writeHighlight(pdfium, page, geometry, annotation),
       StickyNoteAnnotation() => _writeStickyNote(pdfium, page, geometry, annotation),
-      TextBoxAnnotation() => _writeTextBox(
-        pdfium,
-        document,
-        page,
-        geometry,
-        annotation,
-        texts[annotation.id],
-      ),
+      TextBoxAnnotation() => annotation.text.isEmpty
+          ? _unsupported
+          : _writeRasterStamp(
+              pdfium,
+              document,
+              page,
+              geometry,
+              annotation,
+              rasters[annotation.id],
+              contents: annotation.text,
+            ),
+      SignatureAnnotation(:final source) => switch (source) {
+        DrawnSignature() => _writeDrawnSignature(pdfium, page, geometry, annotation, source),
+        _ => _writeRasterStamp(
+          pdfium,
+          document,
+          page,
+          geometry,
+          annotation,
+          rasters[annotation.id],
+          contents: source is TypedSignature ? source.text : null,
+        ),
+      },
       ShapeAnnotation(:final kind) => switch (kind) {
         ShapeKind.rectangle => _writeBoxed(
           pdfium,
@@ -343,31 +370,33 @@ class PdfAnnotationWriter {
     }
   }
 
-  /// Text box.
+  /// Text boxes, typed signatures and image signatures.
   ///
-  /// The text is drawn as an image rather than as PDF text, because neither
-  /// route to real glyphs is open: an appearance stream made by
-  /// `FPDFAnnot_SetAP` gets an empty `/Resources`, leaving no font for `Tf` to
-  /// name, and `FPDFPageObj_NewTextObj` reaches for PDFium's system font
-  /// callback — which pdfrx binds to its worker isolate, so calling it from
-  /// here aborts the process. Flutter draws the text instead, and the picture
-  /// goes into a stamp's appearance. The text also goes into `/Contents`, so
-  /// it stays readable in a viewer's comment list and searchable by tools that
-  /// look there.
-  int _writeTextBox(
+  /// All three end up as a picture in a stamp's appearance, because neither
+  /// route to real PDF text is open: an appearance made by `FPDFAnnot_SetAP`
+  /// gets an empty `/Resources`, leaving no font for `Tf` to name, and
+  /// `FPDFPageObj_NewTextObj` reaches for PDFium's system font callback —
+  /// which pdfrx binds to its worker isolate, so calling it from here aborts
+  /// the process. Flutter draws them instead. Where there is text behind the
+  /// picture it also goes into `/Contents`, so it stays readable in a
+  /// viewer's comment list.
+  int _writeRasterStamp(
     pdfium_bindings.PDFium pdfium,
     pdfium_bindings.FPDF_DOCUMENT document,
     pdfium_bindings.FPDF_PAGE page,
     PdfPageGeometry geometry,
-    TextBoxAnnotation annotation,
-    _TextRaster? raster,
-  ) {
-    if (annotation.text.isEmpty || raster == null) return _unsupported;
+    Annotation annotation,
+    _AnnotationRaster? raster, {
+    String? contents,
+  }) {
+    if (raster == null) return _unsupported;
     final annot = pdfium.FPDFPage_CreateAnnot(page, pdfium_bindings.FPDF_ANNOT_STAMP);
     if (annot == nullptr) return _unsupported;
     try {
-      _setString(pdfium, annot, 'Contents', annotation.text);
-      final rect = geometry.toPdfRect(annotation.bounds);
+      if (contents != null && contents.isNotEmpty) {
+        _setString(pdfium, annot, 'Contents', contents);
+      }
+      final rect = geometry.toPdfRect(annotation.normalizedBounds);
       _setRect(pdfium, annot, geometry, rect);
 
       final placed = using((arena) {
@@ -420,33 +449,120 @@ class PdfAnnotationWriter {
     }
   }
 
-  /// Draws a text box with Flutter and hands back its pixels in the byte order
-  /// PDFium wants.
+  /// A signature drawn by hand, kept as vector strokes.
   ///
-  /// Rendered at [_textRasterScale] so the lettering still looks sharp when
-  /// the page is zoomed.
-  Future<_TextRaster?> _rasterizeText(
-    TextBoxAnnotation annotation,
+  /// Unlike the other two kinds this one need not become pixels: strokes are
+  /// path operators, which an appearance stream can carry without resources.
+  /// A signature is the thing most likely to end up printed, so it is worth
+  /// staying sharp at any size.
+  int _writeDrawnSignature(
+    pdfium_bindings.PDFium pdfium,
+    pdfium_bindings.FPDF_PAGE page,
     PdfPageGeometry geometry,
+    SignatureAnnotation annotation,
+    DrawnSignature source,
+  ) {
+    if (source.strokes.every((stroke) => stroke.isEmpty)) return _unsupported;
+    final annot = pdfium.FPDFPage_CreateAnnot(page, pdfium_bindings.FPDF_ANNOT_STAMP);
+    if (annot == nullptr) return _unsupported;
+    try {
+      _setColor(pdfium, annot, annotation.color, annotation.opacity);
+
+      final bounds = annotation.bounds;
+      // Signature points are fractions of the signature's own box; put them
+      // on the page first, then into PDF coordinates.
+      Offset onPage(Offset point) => geometry.toPdfPoint(
+        Offset(
+          bounds.left + point.dx * bounds.width,
+          bounds.top + point.dy * bounds.height,
+        ),
+      );
+      final strokeWidth = source.strokeWidth * bounds.width * geometry.pageWidth;
+      final appearance = AnnotationAppearance.strokes(
+        strokes: [
+          for (final stroke in source.strokes) [for (final point in stroke) onPage(point)],
+        ],
+        color: annotation.color,
+        strokeWidth: strokeWidth,
+      );
+      if (appearance.extent.isEmpty) return _unsupported;
+
+      // The rectangle has to be set before the appearance: PDFium uses it as
+      // the appearance's bounding box, and anything outside is clipped away.
+      _setRect(
+        pdfium,
+        annot,
+        geometry,
+        PdfPointRect.containing(appearance.extent).inflate(strokeWidth),
+      );
+      _setAppearance(pdfium, annot, appearance.content);
+      return 1;
+    } finally {
+      pdfium.FPDFPage_CloseAnnot(annot);
+    }
+  }
+
+  /// Whether an annotation has to be drawn to pixels before it can be written.
+  static bool _needsRaster(Annotation annotation) => switch (annotation) {
+    TextBoxAnnotation() => true,
+    SignatureAnnotation(:final source) => source is! DrawnSignature,
+    _ => false,
+  };
+
+  /// Decodes the pictures behind any image signatures, so they can be drawn.
+  Future<Map<String, ui.Image>> _decodeSignatureImages(List<Annotation> annotations) async {
+    final images = <String, ui.Image>{};
+    for (final annotation in annotations) {
+      if (annotation case SignatureAnnotation(:final source, :final id)
+          when source is ImageSignature) {
+        try {
+          final codec = await ui.instantiateImageCodec(source.bytes);
+          final frame = await codec.getNextFrame();
+          codec.dispose();
+          images[id] = frame.image;
+        } on Object catch (error) {
+          debugPrint('Could not decode a signature image for export: $error');
+        }
+      }
+    }
+    return images;
+  }
+
+  /// Draws one annotation with Flutter and hands back its pixels in the byte
+  /// order PDFium wants.
+  ///
+  /// The same painter that draws on screen is reused, handed a page rectangle
+  /// sized so the annotation's own bounds fill the picture. Rendered at
+  /// [_rasterScale] so it still looks sharp when the page is zoomed.
+  Future<_AnnotationRaster?> _rasterize(
+    Annotation annotation,
+    PdfPageGeometry geometry,
+    Map<String, ui.Image> images,
   ) async {
-    final rect = geometry.toPdfRect(annotation.bounds);
-    final width = (rect.width * _textRasterScale).round().clamp(1, _maxTextRasterSide);
-    final height = (rect.height * _textRasterScale).round().clamp(1, _maxTextRasterSide);
+    final rect = geometry.toPdfRect(annotation.normalizedBounds);
+    final width = (rect.width * _rasterScale).round().clamp(1, _maxRasterSide);
+    final height = (rect.height * _rasterScale).round().clamp(1, _maxRasterSide);
+
+    final bounds = annotation.normalizedBounds;
+    final pageWidth = bounds.width == 0 ? width.toDouble() : width / bounds.width;
+    final pageHeight = bounds.height == 0 ? height.toDouble() : height / bounds.height;
+    final pageRect = Rect.fromLTWH(
+      -bounds.left * pageWidth,
+      -bounds.top * pageHeight,
+      pageWidth,
+      pageHeight,
+    );
 
     final recorder = ui.PictureRecorder();
-    final canvas = Canvas(recorder);
-    final painter = TextPainter(
-      text: TextSpan(
-        text: annotation.text,
-        style: TextStyle(
-          color: annotation.color.withValues(alpha: annotation.opacity),
-          fontSize: annotation.fontSize * _textRasterScale,
-        ),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout(maxWidth: width.toDouble());
-    painter.paint(canvas, Offset.zero);
-    painter.dispose();
+    AnnotationPainter.paint(
+      Canvas(recorder),
+      annotation,
+      pageRect: pageRect,
+      pageWidthInPoints: geometry.pageWidth,
+      isSelected: false,
+      selectionColor: const Color(0x00000000),
+      signatureImage: (id) => images[id],
+    );
 
     final picture = recorder.endRecording();
     try {
@@ -454,7 +570,7 @@ class PdfAnnotationWriter {
       try {
         final data = await image.toByteData(format: ui.ImageByteFormat.rawRgba);
         if (data == null) return null;
-        return _TextRaster(
+        return _AnnotationRaster(
           bgra: _toBgra(data.buffer.asUint8List()),
           width: width,
           height: height,
@@ -463,7 +579,7 @@ class PdfAnnotationWriter {
         image.dispose();
       }
     } on Object catch (error) {
-      debugPrint('Could not draw the text of an annotation: $error');
+      debugPrint('Could not draw an annotation for export: $error');
       return null;
     } finally {
       picture.dispose();
@@ -584,9 +700,9 @@ class PdfAnnotationExport {
   int get skipped => total - written;
 }
 
-/// A text box drawn to pixels, ready to be handed to PDFium.
-class _TextRaster {
-  const _TextRaster({required this.bgra, required this.width, required this.height});
+/// An annotation drawn to pixels, ready to be handed to PDFium.
+class _AnnotationRaster {
+  const _AnnotationRaster({required this.bgra, required this.width, required this.height});
 
   final Uint8List bgra;
   final int width;
