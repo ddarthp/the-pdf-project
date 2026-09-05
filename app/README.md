@@ -33,6 +33,12 @@ lib/
     model/                     page plan entries
     services/                  PDFium-backed encoder, save dialog
     ui/                        page organiser screen
+  features/annotate/
+    annotation_controller.dart state shared by the layer, toolbar and panel
+    logic/                     coordinate mapping, hit testing, text snapping
+    model/                     annotation types, tools, style
+    services/                  annotation store
+    ui/                        drawing layer, painter, toolbar, panel
 ```
 
 Each feature's `logic/` deliberately has no pdfrx imports so the maths is
@@ -43,6 +49,13 @@ turns it into real pages.
 
 The page organiser never edits the document the viewer has open: it opens its
 own copies, edits a plan, and writes a new file only when you save.
+
+Annotations are stored in **normalised page space** — 0–1 across the page,
+origin top-left — so zoom, reading mode and view rotation all just move the
+page rectangle the viewer reports, and the same numbers map onto it.
+`annotate/logic/page_coordinates.dart` is that mapping. Annotations persist
+per document on-device; they are not yet written into the PDF file itself
+(see the roadmap note in `docs/SPEC.md` §3).
 
 ## Commands
 

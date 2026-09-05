@@ -1,8 +1,17 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 
 import '../../../core/app_theme.dart';
 import '../../../core/view_preferences.dart';
+import '../../annotate/annotation_controller.dart';
+import '../../annotate/model/annotation.dart';
+import '../../annotate/services/annotation_store.dart';
+import '../../annotate/ui/annotation_layer.dart';
+import '../../annotate/ui/annotation_text_dialog.dart';
+import '../../annotate/ui/annotation_toolbar.dart';
+import '../../annotate/ui/annotations_panel.dart';
 import '../../pages/ui/page_organizer_screen.dart';
 import '../logic/page_layout.dart';
 import '../logic/page_navigation.dart';
@@ -27,6 +36,7 @@ class ViewerScreen extends StatefulWidget {
     required this.preferences,
     this.picker = const PdfPicker(),
     this.lastPageStore,
+    this.annotationStore,
     super.key,
   });
 
@@ -37,6 +47,9 @@ class ViewerScreen extends StatefulWidget {
 
   /// Defaults to the on-device shared-preferences store.
   final LastPageStore? lastPageStore;
+
+  /// Defaults to the on-device shared-preferences store.
+  final AnnotationStore? annotationStore;
 
   @override
   State<ViewerScreen> createState() => _ViewerScreenState();
@@ -49,6 +62,10 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   late final LastPageStore _lastPageStore =
       widget.lastPageStore ?? SharedPreferencesLastPageStore();
+
+  late final AnnotationController _annotations = AnnotationController(
+    store: widget.annotationStore ?? SharedPreferencesAnnotationStore(),
+  )..addListener(_onAnnotationsChanged);
 
   /// Null until a document is loaded.
   ///
@@ -79,9 +96,18 @@ class _ViewerScreenState extends State<ViewerScreen> {
     widget.preferences.addListener(_onPreferencesChanged);
   }
 
+  /// The toolbar and the page-navigation bar swap places when annotation mode
+  /// is turned on, so the screen rebuilds with the annotation state.
+  void _onAnnotationsChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
     widget.preferences.removeListener(_onPreferencesChanged);
+    _annotations
+      ..removeListener(_onAnnotationsChanged)
+      ..dispose();
     _disposeSearcher();
     _searchTextController.dispose();
     super.dispose();
@@ -134,6 +160,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   Future<void> _openSource(PdfSource source) async {
     final resumePage = await _lastPageStore.lastPage(source.key);
+    if (!mounted) return;
+    // Writes any pending edits for the previous document before swapping.
+    await _annotations.loadFor(source.key);
     if (!mounted) return;
     // Drop the previous document's searcher immediately: it is bound to a
     // document that is about to go away. onViewerReady builds a new one.
@@ -357,14 +386,65 @@ class _ViewerScreenState extends State<ViewerScreen> {
     // it leaves the document itself untouched.
     return RotatedBox(
       quarterTurns: rotation.quarterTurns,
-      child: PdfViewer(
-        documentRef,
-        key: ValueKey(documentRef.key),
-        controller: _controller,
-        params: _buildParams(context),
-        initialPageNumber: _initialPageNumber,
+      child: Stack(
+        children: [
+          PdfViewer(
+            documentRef,
+            key: ValueKey(documentRef.key),
+            controller: _controller,
+            params: _buildParams(context),
+            initialPageNumber: _initialPageNumber,
+          ),
+          // Inside the RotatedBox so the layer shares the viewer's coordinate
+          // space; it ignores pointers unless a tool needs them.
+          Positioned.fill(
+            child: AnnotationLayer(
+              controller: _annotations,
+              viewer: _controller,
+              requestText: _requestAnnotationText,
+            ),
+          ),
+        ],
       ),
     );
+  }
+
+  // --- annotations ---------------------------------------------------------
+
+  Future<String?> _requestAnnotationText({required String title, required String? initialText}) =>
+      showAnnotationTextDialog(context, title: title, initialText: initialText);
+
+  /// Re-opens the text of a note or text box and writes the edit back.
+  Future<void> _editAnnotationText(Annotation annotation) async {
+    final existing = switch (annotation) {
+      StickyNoteAnnotation(:final text) => text,
+      TextBoxAnnotation(:final text) => text,
+      _ => null,
+    };
+    if (existing == null) return;
+
+    final text = await _requestAnnotationText(
+      title: annotation is StickyNoteAnnotation ? 'Sticky note' : 'Text box',
+      initialText: existing,
+    );
+    if (!mounted || text == null) return;
+    if (text.isEmpty) {
+      _annotations.remove(annotation.id);
+      return;
+    }
+    _annotations.replace(switch (annotation) {
+      StickyNoteAnnotation() => annotation.withText(text),
+      TextBoxAnnotation() => annotation.withText(text),
+      _ => annotation,
+    });
+  }
+
+  /// Takes the reader to an annotation and selects it.
+  void _goToAnnotation(Annotation annotation) {
+    _goToPage(annotation.pageNumber);
+    _annotations
+      ..isEnabled = true
+      ..select(annotation.id);
   }
 
   @override
@@ -395,6 +475,14 @@ class _ViewerScreenState extends State<ViewerScreen> {
             icon: const Icon(Icons.search),
           ),
           IconButton(
+            tooltip: _annotations.isEnabled ? 'Hide annotation tools' : 'Annotate',
+            isSelected: _annotations.isEnabled,
+            onPressed: document == null
+                ? null
+                : () => _annotations.isEnabled = !_annotations.isEnabled,
+            icon: const Icon(Icons.edit_outlined),
+          ),
+          IconButton(
             tooltip: 'Organize pages',
             onPressed: source == null ? null : () => _organizePages(source),
             icon: const Icon(Icons.auto_awesome_motion_outlined),
@@ -421,6 +509,15 @@ class _ViewerScreenState extends State<ViewerScreen> {
           : _buildViewer(documentRef),
       bottomNavigationBar: document == null
           ? null
+          : _annotations.isEnabled
+          ? AnnotationToolbar(
+              controller: _annotations,
+              onClose: () => _annotations.isEnabled = false,
+              onEditSelectedText: () {
+                final selected = _annotations.selected;
+                if (selected != null) unawaited(_editAnnotationText(selected));
+              },
+            )
           : ViewerBottomBar(
               pageNumber: _pageNumber,
               pageCount: _pageCount,
@@ -441,7 +538,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
   Widget _buildSidePanel(PdfDocument document) {
     return Drawer(
       child: DefaultTabController(
-        length: 2,
+        length: 3,
         child: Column(
           children: [
             const SizedBox(height: 8),
@@ -451,6 +548,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
                 tabs: [
                   Tab(icon: Icon(Icons.grid_view), text: 'Pages'),
                   Tab(icon: Icon(Icons.list), text: 'Outline'),
+                  Tab(icon: Icon(Icons.comment_outlined), text: 'Notes'),
                 ],
               ),
             ),
@@ -470,6 +568,17 @@ class _ViewerScreenState extends State<ViewerScreen> {
                     onSelect: (dest) {
                       Navigator.of(context).pop();
                       _controller.goToDest(dest);
+                    },
+                  ),
+                  AnnotationsPanel(
+                    controller: _annotations,
+                    onSelect: (annotation) {
+                      Navigator.of(context).pop();
+                      _goToAnnotation(annotation);
+                    },
+                    onEditText: (annotation) {
+                      Navigator.of(context).pop();
+                      unawaited(_editAnnotationText(annotation));
                     },
                   ),
                 ],
