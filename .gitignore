@@ -1,0 +1,24 @@
+# Flutter / Dart
+app/.dart_tool/
+app/build/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
+app/ios/Pods/
+app/ios/.symlinks/
+app/ios/Flutter/Flutter.framework
+app/android/.gradle/
+app/android/app/debug
+app/android/app/profile
+app/android/app/release
+app/**/*.iml
+app/.idea/
+
+# General
+.DS_Store
+*.log
+.env
+*.local.md
+
+# Claude
+.claude/settings.local.json
+.claude/worktrees/
