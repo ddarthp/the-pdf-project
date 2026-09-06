@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:pdfrx/pdfrx.dart';
 
@@ -16,6 +16,11 @@ import '../../annotate/ui/annotation_text_dialog.dart';
 import '../../annotate/ui/annotation_toolbar.dart';
 import '../../annotate/ui/annotations_panel.dart';
 import '../../forms/services/pdf_form_service.dart';
+import '../../library/logic/recent_documents.dart';
+import '../../library/model/recent_document.dart';
+import '../../library/services/document_cache.dart';
+import '../../library/services/recent_document_store.dart';
+import '../../library/ui/recent_documents_view.dart';
 import '../../forms/ui/form_fill_screen.dart';
 import '../../share/services/pdf_export_service.dart';
 import '../../share/ui/pdf_export_sheet.dart';
@@ -30,7 +35,6 @@ import '../model/pdf_source.dart';
 import '../model/reading_mode.dart';
 import '../services/last_page_store.dart';
 import '../services/pdf_picker.dart';
-import 'empty_state.dart';
 import 'jump_to_page_dialog.dart';
 import 'load_error_banner.dart';
 import 'outline_panel.dart';
@@ -51,6 +55,8 @@ class ViewerScreen extends StatefulWidget {
     this.annotationWriter = const PdfAnnotationWriter(),
     this.signatureImagePicker = const SignatureImagePicker(),
     this.formService = const PdfFormService(),
+    this.recentDocumentStore,
+    this.documentCache = const DocumentCache(),
     super.key,
   });
 
@@ -77,6 +83,12 @@ class ViewerScreen extends StatefulWidget {
   /// Reads and fills the document's form fields.
   final PdfFormService formService;
 
+  /// Defaults to the on-device shared-preferences store.
+  final RecentDocumentStore? recentDocumentStore;
+
+  /// Keeps copies of documents that arrived without a file behind them.
+  final DocumentCache documentCache;
+
   @override
   State<ViewerScreen> createState() => _ViewerScreenState();
 }
@@ -88,6 +100,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   late final LastPageStore _lastPageStore =
       widget.lastPageStore ?? SharedPreferencesLastPageStore();
+
+  late final RecentDocumentStore _recentDocuments =
+      widget.recentDocumentStore ?? SharedPreferencesRecentDocumentStore();
 
   late final AnnotationController _annotations = AnnotationController(
     store: widget.annotationStore ?? SharedPreferencesAnnotationStore(),
@@ -110,6 +125,8 @@ class _ViewerScreenState extends State<ViewerScreen> {
   int _pageNumber = 1;
   int _initialPageNumber = 1;
   int _passwordAttempts = 0;
+  List<RecentDocument> _recents = const [];
+  Set<String> _missingRecentPaths = const {};
   bool _isOpening = false;
   bool _isExporting = false;
   bool _isSearchVisible = false;
@@ -121,6 +138,82 @@ class _ViewerScreenState extends State<ViewerScreen> {
   void initState() {
     super.initState();
     widget.preferences.addListener(_onPreferencesChanged);
+    unawaited(_loadRecents());
+  }
+
+  // --- the library ---------------------------------------------------------
+
+  Future<void> _loadRecents() async {
+    final documents = await _recentDocuments.load();
+    // A document can be moved or deleted between sessions; checking once here
+    // means the list can say so instead of failing when it is tapped.
+    final missing = <String>{
+      for (final document in documents)
+        if (!File(document.path).existsSync()) document.path,
+    };
+    if (!mounted) return;
+    setState(() {
+      _recents = documents;
+      _missingRecentPaths = missing;
+    });
+  }
+
+  /// Records a document at the top of the recents list.
+  ///
+  /// Anything that falls off the end takes the app's own copy of it with it,
+  /// so the list bounds the storage as well as itself.
+  Future<void> _rememberOpened(PdfSource source, String path) async {
+    final promoted = RecentDocuments.promote(
+      _recents,
+      RecentDocument(
+        key: source.key,
+        displayName: source.displayName,
+        path: path,
+        lastOpenedAt: DateTime.now(),
+        pageCount: _recents
+            .where((document) => document.key == source.key)
+            .firstOrNull
+            ?.pageCount,
+      ),
+    );
+    for (final dropped in RecentDocuments.droppedPaths(_recents, promoted)) {
+      await widget.documentCache.discard(dropped);
+    }
+    await _recentDocuments.save(promoted);
+    if (!mounted) return;
+    setState(() {
+      _recents = promoted;
+      _missingRecentPaths = _missingRecentPaths.difference({path});
+    });
+  }
+
+  /// Fills in a document's page count once it is known.
+  Future<void> _recordPageCount(String key, int pageCount) async {
+    final updated = RecentDocuments.withPageCount(_recents, key, pageCount);
+    if (listEquals(updated, _recents)) return;
+    await _recentDocuments.save(updated);
+    if (mounted) setState(() => _recents = updated);
+  }
+
+  Future<void> _forgetRecent(RecentDocument document) async {
+    final remaining = RecentDocuments.remove(_recents, document.key);
+    await widget.documentCache.discard(document.path);
+    await _recentDocuments.save(remaining);
+    if (mounted) setState(() => _recents = remaining);
+  }
+
+  /// Puts the library back on screen, leaving the document behind.
+  void _closeDocument() {
+    unawaited(_annotations.flush());
+    _closeSearch();
+    _disposeSearcher();
+    _annotations.clear();
+    setState(() {
+      _source = null;
+      _documentRef = null;
+      _document = null;
+    });
+    unawaited(_loadRecents());
   }
 
   /// The toolbar and the page-navigation bar swap places when annotation mode
@@ -186,6 +279,18 @@ class _ViewerScreenState extends State<ViewerScreen> {
   }
 
   Future<void> _openSource(PdfSource source) async {
+    // A document picked as raw bytes has no file to come back to, so the app
+    // keeps its own copy — that is what the recents entry points at.
+    final path = switch (source) {
+      PdfFileSource(:final path) => path,
+      PdfDataSource(:final bytes) => await widget.documentCache.store(
+        key: source.key,
+        bytes: bytes,
+        displayName: source.displayName,
+      ),
+    };
+    if (!mounted) return;
+
     final resumePage = await _lastPageStore.lastPage(source.key);
     if (!mounted) return;
     // Writes any pending edits for the previous document before swapping.
@@ -203,6 +308,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
       _initialPageNumber = resumePage ?? 1;
       _pageNumber = _initialPageNumber;
     });
+    await _rememberOpened(source, path);
   }
 
   PdfDocumentRef _createDocumentRef(PdfSource source) {
@@ -420,6 +526,10 @@ class _ViewerScreenState extends State<ViewerScreen> {
           _pageNumber = controller.pageNumber ?? 1;
           _searcher = PdfTextSearcher(controller)..addListener(_onSearcherChanged);
         });
+        final source = _source;
+        if (source != null) {
+          unawaited(_recordPageCount(source.key, document.pages.length));
+        }
       },
       onPageChanged: (pageNumber) {
         if (!mounted || pageNumber == null) return;
@@ -649,6 +759,12 @@ class _ViewerScreenState extends State<ViewerScreen> {
                 onPressed: () => _scaffoldKey.currentState?.openDrawer(),
               ),
         actions: [
+          if (source != null)
+            IconButton(
+              tooltip: 'Recent files',
+              onPressed: _closeDocument,
+              icon: const Icon(Icons.history),
+            ),
           IconButton(
             tooltip: 'Find in document',
             onPressed: _searcher == null ? null : _toggleSearch,
@@ -713,7 +829,18 @@ class _ViewerScreenState extends State<ViewerScreen> {
       ),
       drawer: document == null ? null : _buildSidePanel(document),
       body: documentRef == null
-          ? ViewerEmptyState(onOpenPressed: _openPdf, isOpening: _isOpening)
+          ? RecentDocumentsView(
+              documents: _recents,
+              missingPaths: _missingRecentPaths,
+              isOpening: _isOpening,
+              onOpenPressed: _openPdf,
+              onDocumentSelected: (document) => unawaited(
+                _openSource(
+                  PdfFileSource(path: document.path, displayName: document.displayName),
+                ),
+              ),
+              onDocumentRemoved: (document) => unawaited(_forgetRecent(document)),
+            )
           : _buildViewer(documentRef),
       bottomNavigationBar: document == null
           ? null

@@ -6,7 +6,7 @@ import 'package:the_pdf_project/features/viewer/model/pdf_source.dart';
 import 'package:the_pdf_project/features/viewer/model/reading_mode.dart';
 import 'package:the_pdf_project/features/viewer/model/view_rotation.dart';
 import 'package:the_pdf_project/features/viewer/services/pdf_picker.dart';
-import 'package:the_pdf_project/features/viewer/ui/empty_state.dart';
+import 'package:the_pdf_project/features/library/ui/recent_documents_view.dart';
 import 'package:the_pdf_project/features/viewer/ui/viewer_screen.dart';
 
 /// Stands in for the system document picker. Widget tests never reach PDFium,
@@ -31,7 +31,7 @@ void main() {
   testWidgets('app boots to the empty state with no document open', (tester) async {
     await tester.pumpWidget(const ThePdfProjectApp());
 
-    expect(find.byType(ViewerEmptyState), findsOneWidget);
+    expect(find.byType(RecentDocumentsView), findsOneWidget);
     expect(find.text('The PDF Project'), findsWidgets);
     expect(find.widgetWithText(FilledButton, 'Open PDF'), findsOneWidget);
   });
@@ -54,7 +54,7 @@ void main() {
 
     expect(calls, hasLength(1));
     // A cancelled pick leaves the empty state usable rather than stuck.
-    expect(find.byType(ViewerEmptyState), findsOneWidget);
+    expect(find.byType(RecentDocumentsView), findsOneWidget);
     expect(tester.widget<FilledButton>(find.widgetWithText(FilledButton, 'Open PDF')).onPressed, isNotNull);
   });
 

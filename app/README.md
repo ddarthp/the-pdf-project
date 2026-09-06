@@ -53,6 +53,11 @@ lib/
   features/share/
     services/                  saving, sharing and printing a finished PDF
     ui/                        the destination sheet
+  features/library/
+    logic/                     keeping the recents list in order
+    model/                     a remembered document
+    services/                  the recents store, and copies of picked files
+    ui/                        the home screen
 ```
 
 Each feature's `logic/` deliberately has no pdfrx imports so the maths is
@@ -80,6 +85,18 @@ drawing instructions for the shapes PDFium will not draw itself in
 A signature is captured in `features/signature/` and then placed as a
 `SignatureAnnotation`, so it inherits the annotation feature's placement,
 selection, moving, resizing and export rather than repeating any of it.
+
+With no document open the viewer shows the library: what has been read
+recently, and a way to open something else. A recents entry is keyed the same
+way as the rest of the app keys a document, so the page it was left on and the
+annotations on it follow it around. Documents picked as raw bytes — Android's
+picker often hands back a content URI with no file behind it — are copied into
+the app's own folder so the entry still opens later; those copies are deleted
+when the entry falls off the end of the list.
+
+The recents list lives in shared preferences rather than a database: it is
+capped at 30 small records, so there is nothing a query would help with. A
+database earns its place when the library grows into something searchable.
 
 Every screen that produces a PDF — the organiser, the form filler, the
 annotation export, and the viewer itself — hands it to the same destination

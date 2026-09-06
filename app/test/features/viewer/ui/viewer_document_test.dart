@@ -12,7 +12,10 @@ import 'package:the_pdf_project/features/viewer/model/reading_mode.dart';
 import 'package:the_pdf_project/features/viewer/model/view_rotation.dart';
 import 'package:the_pdf_project/features/viewer/services/last_page_store.dart';
 import 'package:the_pdf_project/features/viewer/services/pdf_picker.dart';
-import 'package:the_pdf_project/features/viewer/ui/empty_state.dart';
+import 'package:the_pdf_project/features/library/model/recent_document.dart';
+import 'package:the_pdf_project/features/library/services/document_cache.dart';
+import 'package:the_pdf_project/features/library/services/recent_document_store.dart';
+import 'package:the_pdf_project/features/library/ui/recent_documents_view.dart';
 import 'package:the_pdf_project/features/viewer/ui/load_error_banner.dart';
 import 'package:the_pdf_project/features/viewer/ui/thumbnail_panel.dart';
 import 'package:the_pdf_project/features/forms/ui/form_fill_screen.dart';
@@ -46,8 +49,18 @@ void main() {
   });
 
   late RecordingExporter exporter;
+  late InMemoryRecentDocumentStore recents;
+  late Directory libraryDirectory;
 
-  setUp(() => exporter = RecordingExporter());
+  setUp(() {
+    exporter = RecordingExporter();
+    recents = InMemoryRecentDocumentStore();
+    libraryDirectory = Directory.systemTemp.createTempSync('library');
+  });
+
+  tearDown(() {
+    if (libraryDirectory.existsSync()) libraryDirectory.deleteSync(recursive: true);
+  });
 
   Future<void> pumpScreen(
     WidgetTester tester, {
@@ -67,6 +80,8 @@ void main() {
           picker: _FixturePdfPicker(fixture, name),
           lastPageStore: store,
           exporter: exporter,
+          recentDocumentStore: recents,
+          documentCache: DocumentCache(directoryProvider: () async => libraryDirectory),
         ),
       ),
     );
@@ -87,7 +102,7 @@ void main() {
   documentTest('opening a PDF renders it and reveals the reading controls', (tester) async {
     await openSample(tester);
 
-    expect(find.byType(ViewerEmptyState), findsNothing);
+    expect(find.byType(RecentDocumentsView), findsNothing);
     expect(find.byType(PdfViewer), findsOneWidget);
     expect(find.text('sample.pdf'), findsOneWidget);
     expect(find.text('1 / 3'), findsOneWidget);
@@ -211,7 +226,7 @@ void main() {
       key: const ValueKey('restarted'),
     );
     await tester.pumpAndSettle();
-    expect(find.byType(ViewerEmptyState), findsOneWidget);
+    expect(find.byType(RecentDocumentsView), findsOneWidget);
 
     await tester.tap(find.widgetWithText(FilledButton, 'Open PDF'));
     await pumpUntil(tester, find.text('3 / 3'));
@@ -229,6 +244,90 @@ void main() {
     expect(find.byType(PageTile), findsNWidgets(3));
     // The viewer's own document is untouched behind the organiser.
     expect(find.text('Page 1 of sample.pdf'), findsOneWidget);
+  });
+
+  group('the library', () {
+    documentTest('an opened document joins the recent list', (tester) async {
+      await openSample(tester);
+
+      final documents = await recents.load();
+      expect(documents, hasLength(1));
+      expect(documents.single.displayName, 'sample.pdf');
+      expect(documents.single.path, sampleFixture);
+      // The page count is filled in once the document has actually opened.
+      expect(documents.single.pageCount, 3);
+    });
+
+    documentTest('the reader can go back to the library and open from it', (tester) async {
+      await openSample(tester);
+      await tester.tap(find.byTooltip('Recent files'));
+      await tester.pumpAndSettle();
+
+      // The document is put down and the library is on screen instead.
+      expect(find.byType(PdfViewer), findsNothing);
+      expect(find.byType(RecentDocumentsView), findsOneWidget);
+      expect(find.text('sample.pdf'), findsOneWidget);
+      expect(find.text('3 pages · Just now'), findsOneWidget);
+
+      await tester.tap(find.text('sample.pdf'));
+      await pumpUntil(tester, find.text('1 / 3'));
+    });
+
+    documentTest('reopening from the library resumes where it was left', (tester) async {
+      final store = InMemoryLastPageStore();
+      await openSample(tester, store: store);
+      await tester.tap(find.byTooltip('Last page'));
+      await pumpUntil(tester, find.text('3 / 3'));
+
+      await tester.tap(find.byTooltip('Recent files'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('sample.pdf'));
+
+      await pumpUntil(tester, find.text('3 / 3'));
+    });
+
+    documentTest('a document already listed moves up rather than doubling', (tester) async {
+      await openSample(tester);
+      await tester.tap(find.byTooltip('Recent files'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('sample.pdf'));
+      await pumpUntil(tester, find.text('1 / 3'));
+
+      expect(await recents.load(), hasLength(1));
+    });
+
+    documentTest('a document can be taken off the list', (tester) async {
+      await openSample(tester);
+      await tester.tap(find.byTooltip('Recent files'));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byTooltip('Remove from recent'));
+      await pumpUntilAbsent(tester, find.text('sample.pdf'));
+
+      expect(await recents.load(), isEmpty);
+      // Back to the invitation to open something.
+      expect(find.widgetWithText(FilledButton, 'Open PDF'), findsOneWidget);
+    });
+
+    documentTest('a remembered document that has gone is shown as unavailable', (tester) async {
+      await recents.save([
+        RecentDocument(
+          key: 'file:/gone/missing.pdf',
+          displayName: 'missing.pdf',
+          path: '/gone/missing.pdf',
+          lastOpenedAt: DateTime.now(),
+        ),
+      ]);
+
+      await pumpScreen(
+        tester,
+        preferences: ViewPreferences(),
+        store: InMemoryLastPageStore(),
+      );
+      await pumpUntil(tester, find.text('missing.pdf'));
+
+      expect(find.text('No longer on this device'), findsOneWidget);
+    });
   });
 
   group('sharing the open document', () {
