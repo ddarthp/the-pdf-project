@@ -26,6 +26,10 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>The PDF Project uses the camera so you can scan a paper document into a PDF. Scans are processed on this device and are never uploaded.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>The PDF Project reads the photos you pick so it can turn them into a PDF, or place a photo of your signature on a page. Your photos stay on this device and are never uploaded.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>

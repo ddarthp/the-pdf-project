@@ -42,4 +42,36 @@
             <data android:mimeType="text/plain"/>
         </intent>
     </queries>
+
+    <!-- The scanner takes a picture with whatever camera app is installed
+         (MediaStore.ACTION_IMAGE_CAPTURE), writing the photo to our own
+         FileProvider. On Android 11+ the plugin has to look that camera app up
+         to grant it write access to the output file, and package-visibility
+         filtering hides it without this declaration. See
+         https://developer.android.com/training/package-visibility. -->
+    <queries>
+        <intent>
+            <action android:name="android.media.action.IMAGE_CAPTURE"/>
+        </intent>
+    </queries>
+
+    <!-- Deliberately no <uses-permission> entries.
+
+         android.permission.CAMERA is NOT declared: handing the capture to
+         another camera app needs no permission of ours, and image_picker asks
+         for CAMERA at runtime only when it finds the permission in the merged
+         manifest (ImagePickerUtils.needRequestCameraPermission), so declaring
+         it would add a prompt the app does not need.
+
+         READ_MEDIA_IMAGES / READ_EXTERNAL_STORAGE are NOT declared either:
+         pictures arrive through the system photo picker or the document
+         picker, which hand back only what the user chose. Files are opened and
+         saved the same way, through the system file picker.
+
+         Nothing here talks to the network, so the shipped app has no INTERNET
+         permission; the debug and profile manifests add it for hot reload and
+         it does not merge into a release build.
+
+         The camera is optional hardware — no <uses-feature> requirement, so
+         the app still installs on a device without one. -->
 </manifest>
