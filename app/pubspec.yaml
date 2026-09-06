@@ -43,6 +43,7 @@ dependencies:
   ffi: ^2.2.0
   printing: ^5.15.0
   crypto: ^3.0.7
+  image_picker: ^1.2.3
 dev_dependencies:
   flutter_test:
     sdk: flutter

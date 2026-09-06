@@ -19,6 +19,7 @@ void main() {
       List<RecentDocument> removed,
       int openPresses,
       int imagePresses,
+      int scanPresses,
     })
   >
   pumpView(
@@ -30,6 +31,7 @@ void main() {
     final removed = <RecentDocument>[];
     var openPresses = 0;
     var imagePresses = 0;
+    var scanPresses = 0;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -40,6 +42,7 @@ void main() {
             isOpening: false,
             onOpenPressed: () => openPresses++,
             onImagesPressed: () => imagePresses++,
+            onScanPressed: () => scanPresses++,
             onDocumentSelected: opened.add,
             onDocumentRemoved: removed.add,
           ),
@@ -51,6 +54,7 @@ void main() {
       removed: removed,
       openPresses: openPresses,
       imagePresses: imagePresses,
+      scanPresses: scanPresses,
     );
   }
 
@@ -120,11 +124,12 @@ void main() {
     expect(find.widgetWithText(FilledButton, 'Open PDF'), findsOneWidget);
   });
 
-  testWidgets('a new document can be started from pictures, list or no list', (tester) async {
+  testWidgets('a new document can be started either way, list or no list', (tester) async {
     for (final documents in [const <RecentDocument>[], [document('a')]]) {
       await pumpView(tester, documents: documents);
 
       expect(find.widgetWithText(OutlinedButton, 'Images to PDF'), findsOneWidget);
+      expect(find.widgetWithText(OutlinedButton, 'Scan'), findsOneWidget);
     }
   });
 

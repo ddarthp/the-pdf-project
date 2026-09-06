@@ -14,6 +14,7 @@ class RecentDocumentsView extends StatelessWidget {
     required this.isOpening,
     required this.onOpenPressed,
     required this.onImagesPressed,
+    required this.onScanPressed,
     required this.onDocumentSelected,
     required this.onDocumentRemoved,
     super.key,
@@ -30,6 +31,9 @@ class RecentDocumentsView extends StatelessWidget {
 
   /// Starts a new document from pictures.
   final VoidCallback onImagesPressed;
+
+  /// Starts a new document from the camera.
+  final VoidCallback onScanPressed;
   final ValueChanged<RecentDocument> onDocumentSelected;
   final ValueChanged<RecentDocument> onDocumentRemoved;
 
@@ -42,6 +46,7 @@ class RecentDocumentsView extends StatelessWidget {
         isOpening: isOpening,
         onOpenPressed: onOpenPressed,
         onImagesPressed: onImagesPressed,
+        onScanPressed: onScanPressed,
       );
     }
 
@@ -82,6 +87,7 @@ class RecentDocumentsView extends StatelessWidget {
               isOpening: isOpening,
               onOpenPressed: onOpenPressed,
               onImagesPressed: onImagesPressed,
+              onScanPressed: onScanPressed,
             ),
           ),
         ),
@@ -172,11 +178,13 @@ class _StartActions extends StatelessWidget {
     required this.isOpening,
     required this.onOpenPressed,
     required this.onImagesPressed,
+    required this.onScanPressed,
   });
 
   final bool isOpening;
   final VoidCallback onOpenPressed;
   final VoidCallback onImagesPressed;
+  final VoidCallback onScanPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -199,6 +207,11 @@ class _StartActions extends StatelessWidget {
           label: Text(isOpening ? 'Opening…' : 'Open PDF'),
         ),
         OutlinedButton.icon(
+          onPressed: onScanPressed,
+          icon: const Icon(Icons.document_scanner_outlined),
+          label: const Text('Scan'),
+        ),
+        OutlinedButton.icon(
           onPressed: onImagesPressed,
           icon: const Icon(Icons.photo_library_outlined),
           label: const Text('Images to PDF'),
@@ -213,11 +226,13 @@ class _EmptyLibrary extends StatelessWidget {
     required this.isOpening,
     required this.onOpenPressed,
     required this.onImagesPressed,
+    required this.onScanPressed,
   });
 
   final bool isOpening;
   final VoidCallback onOpenPressed;
   final VoidCallback onImagesPressed;
+  final VoidCallback onScanPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -247,6 +262,7 @@ class _EmptyLibrary extends StatelessWidget {
                 isOpening: isOpening,
                 onOpenPressed: onOpenPressed,
                 onImagesPressed: onImagesPressed,
+                onScanPressed: onScanPressed,
               ),
             ],
           ),

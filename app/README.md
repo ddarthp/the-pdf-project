@@ -14,6 +14,7 @@ T0 viewer.
 | PDF rendering / text / outline | `pdfrx` (PDFium) |
 | PDF generation (test fixtures) | `pdf` |
 | Document picking | `file_picker` |
+| Camera capture | `image_picker` |
 | Print and share sheet | `printing` |
 | Preferences (last page read) | `shared_preferences` |
 | Paths | `path_provider` |
@@ -63,6 +64,11 @@ lib/
     model/                     a picked image
     services/                  choosing images, building the PDF
     ui/                        the images-to-PDF screen
+  features/scan/
+    logic/                     finding the page, straightening it, cleaning it
+    model/                     a scanned page, its corners, its filter
+    services/                  the camera seam, and the processing pipeline
+    ui/                        the scanner and its per-page review
 ```
 
 Each feature's `logic/` deliberately has no pdfrx imports so the maths is
@@ -98,6 +104,15 @@ annotations on it follow it around. Documents picked as raw bytes — Android's
 picker often hands back a content URI with no file behind it — are copied into
 the app's own folder so the entry still opens later; those copies are deleted
 when the entry falls off the end of the list.
+
+"Scan" on the home screen photographs a page, finds it against its
+background, straightens it and cleans it up. The finding, straightening and
+filtering are pure functions over pixels — `scan/logic/` — so the whole
+scanner is tested on synthetic photographs, without a camera. Capture goes
+through the system camera rather than an in-app preview: the phone already
+handles focus, exposure and the permission prompt, and what the scanner needs
+from it is one sharp photograph. The pages are then handed to the same builder
+that turns pictures into a PDF.
 
 "Images to PDF" on the home screen turns photos or scans into a document, one
 page each. Every page is exactly the shape of its picture and the picture

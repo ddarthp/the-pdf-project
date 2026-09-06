@@ -16,6 +16,7 @@ import '../../annotate/ui/annotation_text_dialog.dart';
 import '../../annotate/ui/annotation_toolbar.dart';
 import '../../annotate/ui/annotations_panel.dart';
 import '../../convert/ui/image_to_pdf_screen.dart';
+import '../../scan/ui/scan_screen.dart';
 import '../../forms/services/pdf_form_service.dart';
 import '../../library/logic/recent_documents.dart';
 import '../../library/model/recent_document.dart';
@@ -361,14 +362,21 @@ class _ViewerScreenState extends State<ViewerScreen> {
   ///
   /// Started from the library rather than from a document, because it makes
   /// one rather than changing one.
-  Future<void> _makePdfFromImages() async {
+  Future<void> _makePdfFromImages() => _startNewDocument(const ImageToPdfScreen());
+
+  /// Runs a screen that makes a document out of nothing, and reports where the
+  /// result went.
+  Future<void> _startNewDocument(Widget screen) async {
     final saved = await Navigator.of(context).push<Uri>(
-      MaterialPageRoute(builder: (context) => const ImageToPdfScreen()),
+      MaterialPageRoute(builder: (context) => screen),
     );
     if (!mounted || saved == null) return;
     _announceSavedCopy(saved);
     unawaited(_loadRecents());
   }
+
+  /// Scans a new document with the camera.
+  Future<void> _scanDocument() => _startNewDocument(const ScanScreen());
 
   /// Opens the form filler on a copy of the current document.
   ///
@@ -849,6 +857,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
               isOpening: _isOpening,
               onOpenPressed: _openPdf,
               onImagesPressed: () => unawaited(_makePdfFromImages()),
+              onScanPressed: () => unawaited(_scanDocument()),
               onDocumentSelected: (document) => unawaited(
                 _openSource(
                   PdfFileSource(path: document.path, displayName: document.displayName),
