@@ -15,6 +15,7 @@ import '../../annotate/ui/annotation_layer.dart';
 import '../../annotate/ui/annotation_text_dialog.dart';
 import '../../annotate/ui/annotation_toolbar.dart';
 import '../../annotate/ui/annotations_panel.dart';
+import '../../convert/ui/image_to_pdf_screen.dart';
 import '../../forms/services/pdf_form_service.dart';
 import '../../library/logic/recent_documents.dart';
 import '../../library/model/recent_document.dart';
@@ -354,6 +355,19 @@ class _ViewerScreenState extends State<ViewerScreen> {
       case _DocumentAction.fillForm:
         unawaited(_fillForm(source));
     }
+  }
+
+  /// Makes a new PDF out of pictures.
+  ///
+  /// Started from the library rather than from a document, because it makes
+  /// one rather than changing one.
+  Future<void> _makePdfFromImages() async {
+    final saved = await Navigator.of(context).push<Uri>(
+      MaterialPageRoute(builder: (context) => const ImageToPdfScreen()),
+    );
+    if (!mounted || saved == null) return;
+    _announceSavedCopy(saved);
+    unawaited(_loadRecents());
   }
 
   /// Opens the form filler on a copy of the current document.
@@ -834,6 +848,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
               missingPaths: _missingRecentPaths,
               isOpening: _isOpening,
               onOpenPressed: _openPdf,
+              onImagesPressed: () => unawaited(_makePdfFromImages()),
               onDocumentSelected: (document) => unawaited(
                 _openSource(
                   PdfFileSource(path: document.path, displayName: document.displayName),

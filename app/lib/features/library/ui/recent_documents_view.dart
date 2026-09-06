@@ -13,6 +13,7 @@ class RecentDocumentsView extends StatelessWidget {
     required this.missingPaths,
     required this.isOpening,
     required this.onOpenPressed,
+    required this.onImagesPressed,
     required this.onDocumentSelected,
     required this.onDocumentRemoved,
     super.key,
@@ -26,6 +27,9 @@ class RecentDocumentsView extends StatelessWidget {
 
   final bool isOpening;
   final VoidCallback onOpenPressed;
+
+  /// Starts a new document from pictures.
+  final VoidCallback onImagesPressed;
   final ValueChanged<RecentDocument> onDocumentSelected;
   final ValueChanged<RecentDocument> onDocumentRemoved;
 
@@ -33,7 +37,13 @@ class RecentDocumentsView extends StatelessWidget {
   Widget build(BuildContext context) {
     // No spinner while the list loads: reading it takes a moment and a
     // spinner would only hide the one button that is always worth showing.
-    if (documents.isEmpty) return _EmptyLibrary(isOpening: isOpening, onOpenPressed: onOpenPressed);
+    if (documents.isEmpty) {
+      return _EmptyLibrary(
+        isOpening: isOpening,
+        onOpenPressed: onOpenPressed,
+        onImagesPressed: onImagesPressed,
+      );
+    }
 
     final theme = Theme.of(context);
     return Column(
@@ -68,16 +78,10 @@ class RecentDocumentsView extends StatelessWidget {
           top: false,
           child: Padding(
             padding: const EdgeInsets.all(16),
-            child: FilledButton.icon(
-              onPressed: isOpening ? null : onOpenPressed,
-              icon: isOpening
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.folder_open),
-              label: Text(isOpening ? 'Opening…' : 'Open PDF'),
+            child: _StartActions(
+              isOpening: isOpening,
+              onOpenPressed: onOpenPressed,
+              onImagesPressed: onImagesPressed,
             ),
           ),
         ),
@@ -162,11 +166,58 @@ String describeWhen(DateTime when, {DateTime? now}) {
   return '$months ${months == 1 ? 'month' : 'months'} ago';
 }
 
-class _EmptyLibrary extends StatelessWidget {
-  const _EmptyLibrary({required this.isOpening, required this.onOpenPressed});
+/// Opening something that exists, or making something that does not.
+class _StartActions extends StatelessWidget {
+  const _StartActions({
+    required this.isOpening,
+    required this.onOpenPressed,
+    required this.onImagesPressed,
+  });
 
   final bool isOpening;
   final VoidCallback onOpenPressed;
+  final VoidCallback onImagesPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    // Wraps rather than overflowing: two buttons side by side do not fit a
+    // narrow phone.
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 12,
+      runSpacing: 8,
+      children: [
+        FilledButton.icon(
+          onPressed: isOpening ? null : onOpenPressed,
+          icon: isOpening
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.folder_open),
+          label: Text(isOpening ? 'Opening…' : 'Open PDF'),
+        ),
+        OutlinedButton.icon(
+          onPressed: onImagesPressed,
+          icon: const Icon(Icons.photo_library_outlined),
+          label: const Text('Images to PDF'),
+        ),
+      ],
+    );
+  }
+}
+
+class _EmptyLibrary extends StatelessWidget {
+  const _EmptyLibrary({
+    required this.isOpening,
+    required this.onOpenPressed,
+    required this.onImagesPressed,
+  });
+
+  final bool isOpening;
+  final VoidCallback onOpenPressed;
+  final VoidCallback onImagesPressed;
 
   @override
   Widget build(BuildContext context) {
@@ -192,16 +243,10 @@ class _EmptyLibrary extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 24),
-              FilledButton.icon(
-                onPressed: isOpening ? null : onOpenPressed,
-                icon: isOpening
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.folder_open),
-                label: Text(isOpening ? 'Opening…' : 'Open PDF'),
+              _StartActions(
+                isOpening: isOpening,
+                onOpenPressed: onOpenPressed,
+                onImagesPressed: onImagesPressed,
               ),
             ],
           ),

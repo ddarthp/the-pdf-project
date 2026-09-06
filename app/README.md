@@ -58,6 +58,11 @@ lib/
     model/                     a remembered document
     services/                  the recents store, and copies of picked files
     ui/                        the home screen
+  features/convert/
+    logic/                     page shapes, and the order of the pages
+    model/                     a picked image
+    services/                  choosing images, building the PDF
+    ui/                        the images-to-PDF screen
 ```
 
 Each feature's `logic/` deliberately has no pdfrx imports so the maths is
@@ -93,6 +98,14 @@ annotations on it follow it around. Documents picked as raw bytes — Android's
 picker often hands back a content URI with no file behind it — are copied into
 the app's own folder so the entry still opens later; those copies are deleted
 when the entry falls off the end of the list.
+
+"Images to PDF" on the home screen turns photos or scans into a document, one
+page each. Every page is exactly the shape of its picture and the picture
+fills it, which keeps the arrangement to a single instruction and lets a
+JPEG's own bytes go into the document untouched — an album of photographs does
+not swell on the way in. Paper sizes, margins and cropping are not offered:
+placing a picture *within* a page means positioning it in PDF coordinates, and
+that is unfinished work rather than a decision.
 
 The recents list lives in shared preferences rather than a database: it is
 capped at 30 small records, so there is nothing a query would help with. A

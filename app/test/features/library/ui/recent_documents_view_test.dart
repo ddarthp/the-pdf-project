@@ -13,7 +13,15 @@ RecentDocument document(String name, {String? path, int? pageCount, Duration? ag
     );
 
 void main() {
-  Future<({List<RecentDocument> opened, List<RecentDocument> removed, int openPresses})> pumpView(
+  Future<
+    ({
+      List<RecentDocument> opened,
+      List<RecentDocument> removed,
+      int openPresses,
+      int imagePresses,
+    })
+  >
+  pumpView(
     WidgetTester tester, {
     List<RecentDocument> documents = const [],
     Set<String> missingPaths = const {},
@@ -21,6 +29,7 @@ void main() {
     final opened = <RecentDocument>[];
     final removed = <RecentDocument>[];
     var openPresses = 0;
+    var imagePresses = 0;
 
     await tester.pumpWidget(
       MaterialApp(
@@ -30,13 +39,19 @@ void main() {
             missingPaths: missingPaths,
             isOpening: false,
             onOpenPressed: () => openPresses++,
+            onImagesPressed: () => imagePresses++,
             onDocumentSelected: opened.add,
             onDocumentRemoved: removed.add,
           ),
         ),
       ),
     );
-    return (opened: opened, removed: removed, openPresses: openPresses);
+    return (
+      opened: opened,
+      removed: removed,
+      openPresses: openPresses,
+      imagePresses: imagePresses,
+    );
   }
 
   testWidgets('an empty library invites you to open something', (tester) async {
@@ -103,6 +118,14 @@ void main() {
     await pumpView(tester, documents: [document('a')]);
 
     expect(find.widgetWithText(FilledButton, 'Open PDF'), findsOneWidget);
+  });
+
+  testWidgets('a new document can be started from pictures, list or no list', (tester) async {
+    for (final documents in [const <RecentDocument>[], [document('a')]]) {
+      await pumpView(tester, documents: documents);
+
+      expect(find.widgetWithText(OutlinedButton, 'Images to PDF'), findsOneWidget);
+    }
   });
 
   group('describeWhen', () {
