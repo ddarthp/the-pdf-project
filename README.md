@@ -200,11 +200,16 @@ to `master` yet.
 
 Known gaps, none of them hidden:
 
-- **Nothing has been built for a device.** `flutter build apk` and
-  `flutter build ios` have never run — the machine this was written on has no
-  Android SDK and is not a Mac. Six plugins' platform code, the manifest
-  merge, the permission prompts and PDFium's native packaging are all
-  unverified on real hardware. This is the next thing to do.
+- **Nothing has run on real hardware yet.** Both platforms now build:
+  `flutter build apk` produces an APK, `flutter build ios` archives, and the
+  app has been installed and driven on the iOS simulator — it opens and
+  renders documents there. What is still unverified is a physical device: the
+  camera capture, the permission prompts, printing and the share sheet all
+  hand off to the OS in ways a simulator does not reproduce.
+- **No iOS build can be signed yet.** The Apple team is wired up
+  (`DEVELOPMENT_TEAM` in the Xcode project) and Apple accepts it, but the team
+  has no registered devices, so Apple issues no provisioning profile and
+  `flutter build ipa` stops at signing. Connect a device once and it resolves.
 - **Release signing** uses the debug keystore. Create a keystore, add
   `android/key.properties` (already gitignored) and a real `signingConfig`.
 - **Display names** are still the scaffold's: `the_pdf_project` on Android,

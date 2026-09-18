@@ -35,6 +35,7 @@ import '../logic/page_navigation.dart';
 import '../logic/pdfrx_layout_adapter.dart';
 import '../model/pdf_source.dart';
 import '../model/reading_mode.dart';
+import '../services/incoming_documents.dart';
 import '../services/last_page_store.dart';
 import '../services/pdf_picker.dart';
 import 'jump_to_page_dialog.dart';
@@ -42,6 +43,7 @@ import 'load_error_banner.dart';
 import 'outline_panel.dart';
 import 'password_dialog.dart';
 import 'search_bar_panel.dart';
+import 'text_selection_menu.dart';
 import 'thumbnail_panel.dart';
 import 'viewer_bottom_bar.dart';
 
@@ -59,6 +61,7 @@ class ViewerScreen extends StatefulWidget {
     this.formService = const PdfFormService(),
     this.recentDocumentStore,
     this.documentCache = const DocumentCache(),
+    this.incomingDocuments,
     super.key,
   });
 
@@ -91,6 +94,9 @@ class ViewerScreen extends StatefulWidget {
   /// Keeps copies of documents that arrived without a file behind them.
   final DocumentCache documentCache;
 
+  /// Defaults to the platform channels another app hands documents over on.
+  final IncomingDocuments? incomingDocuments;
+
   @override
   State<ViewerScreen> createState() => _ViewerScreenState();
 }
@@ -105,6 +111,11 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   late final RecentDocumentStore _recentDocuments =
       widget.recentDocumentStore ?? SharedPreferencesRecentDocumentStore();
+
+  late final IncomingDocuments _incomingDocuments =
+      widget.incomingDocuments ?? IncomingDocuments();
+
+  StreamSubscription<List<PdfFileSource>>? _incomingSubscription;
 
   late final AnnotationController _annotations = AnnotationController(
     store: widget.annotationStore ?? SharedPreferencesAnnotationStore(),
@@ -140,7 +151,42 @@ class _ViewerScreenState extends State<ViewerScreen> {
   void initState() {
     super.initState();
     widget.preferences.addListener(_onPreferencesChanged);
-    unawaited(_loadRecents());
+    _incomingSubscription = _incomingDocuments.documents.listen(
+      (documents) => unawaited(_openIncoming(documents)),
+    );
+    unawaited(_start());
+  }
+
+  /// Reads the library, then opens whatever the app was launched with.
+  ///
+  /// In that order because recording an opened document rewrites the list:
+  /// racing the two would drop the incoming document out of it again.
+  Future<void> _start() async {
+    await _loadRecents();
+    if (!mounted) return;
+    await _openIncoming(await _incomingDocuments.takeInitialDocuments());
+  }
+
+  /// Opens documents another app has handed over.
+  ///
+  /// The first one is opened through [_openSource], exactly as a pick or a tap
+  /// in the library would — so a document already on screen is put down the
+  /// same way it is when the reader switches documents themselves, with its
+  /// pending annotations written out rather than a prompt they did not ask
+  /// for standing between them and what they just tapped "open with" on.
+  ///
+  /// A share sheet can send several at once. Only one can be read at a time,
+  /// so the rest join the recents list — the place the reader already looks
+  /// for a document they have not opened yet.
+  Future<void> _openIncoming(List<PdfFileSource> documents) async {
+    if (documents.isEmpty || !mounted) return;
+    // Remembered back to front, so that once the first is opened on top of
+    // them the list reads in the order they were shared.
+    for (final document in documents.skip(1).toList().reversed) {
+      await _rememberOpened(document, document.path);
+      if (!mounted) return;
+    }
+    await _openSource(documents.first);
   }
 
   // --- the library ---------------------------------------------------------
@@ -226,6 +272,9 @@ class _ViewerScreenState extends State<ViewerScreen> {
 
   @override
   void dispose() {
+    // Not awaited: cancelling tells the platform to stop sending, and nothing
+    // here needs to wait for that answer to come back.
+    unawaited(_incomingSubscription?.cancel());
     widget.preferences.removeListener(_onPreferencesChanged);
     _annotations
       ..removeListener(_onAnnotationsChanged)
@@ -531,6 +580,7 @@ class _ViewerScreenState extends State<ViewerScreen> {
           ? PdfPageAnchor.all
           : PdfPageAnchor.top,
       onInteractionEnd: _snapToNearestPage,
+      buildContextMenu: buildTextSelectionContextMenu,
       pagePaintCallbacks: [
         if (widget.preferences.invertPages) _paintNightMode,
         if (_searcher != null) _searcher!.pageTextMatchPaintCallback,

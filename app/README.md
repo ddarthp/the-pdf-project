@@ -142,12 +142,23 @@ focused widget until focus moves on.
 ## Commands
 
 ```sh
+flutter config --enable-native-assets   # once per machine, see below
 flutter pub get
 flutter analyze
 flutter test
 flutter test --exclude-tags pdfium   # skip tests that load the native library
 flutter run                          # needs a connected iOS/Android device
 ```
+
+The tests tagged `pdfium` open real documents, so they need a PDFium the test
+host can load. Enabling native assets is what puts one there: `flutter test`
+then runs `pdfium_dart`'s build hook, which downloads the library to
+`build/native_assets/<host>/`, and `test/support/pdfium_test_support.dart`
+points `Pdfrx.pdfiumModulePath` at it. Without the flag those tests fail in
+`setUpAll` with `Failed to load PDFium module`, because the package's own
+loader has no macOS branch and its fallback looks for a native-assets file
+that current Flutter versions no longer write. Set `PDFIUM_PATH` to use a
+build of your own instead.
 
 ## Test fixtures
 

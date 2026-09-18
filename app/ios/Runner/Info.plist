@@ -6,6 +6,30 @@
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
+	<!-- Puts The PDF Project in the system's "Open with" and share menus for
+	     a PDF. Editor rather than Viewer because the app annotates, fills in
+	     forms and reorders pages, and the role is what the OS shows the
+	     reader when it asks which app should handle the document. -->
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>PDF Document</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Alternate</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>com.adobe.pdf</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Opens the reader's own file where it already lives instead of having
+	     iOS drop a copy in the app's Inbox, so the document the app edits is
+	     the one they picked. -->
+	<key>LSSupportsOpeningDocumentsInPlace</key>
+	<true/>
 	<key>CFBundleDisplayName</key>
 	<string>The Pdf Project</string>
 	<key>CFBundleExecutable</key>

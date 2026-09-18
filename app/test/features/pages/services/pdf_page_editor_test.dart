@@ -1,7 +1,6 @@
 @Tags(['pdfium'])
 library;
 
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +9,8 @@ import 'package:the_pdf_project/features/pages/logic/page_operations.dart';
 import 'package:the_pdf_project/features/pages/model/page_plan_entry.dart';
 import 'package:the_pdf_project/features/pages/services/pdf_page_editor.dart';
 import 'package:the_pdf_project/features/viewer/model/pdf_source.dart';
+
+import '../../../support/pdfium_test_support.dart';
 
 /// End-to-end page operations: build a plan, encode it with PDFium, then
 /// reopen the result and check the document that actually came out.
@@ -20,11 +21,7 @@ void main() {
     displayName: 'encrypted.pdf',
   );
 
-  setUpAll(() async {
-    TestWidgetsFlutterBinding.ensureInitialized();
-    Pdfrx.cacheDirectoryPath ??= Directory.systemTemp.createTempSync('pdfrx_pages').path;
-    await pdfrxFlutterInitialize();
-  });
+  setUpAll(initializePdfiumForTests);
 
   late PdfPageEditor editor;
 

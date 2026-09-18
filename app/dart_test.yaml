@@ -1,4 +1,6 @@
 tags:
-  # Tests that load the bundled PDFium native library. Exclude with
-  # `flutter test --exclude-tags pdfium` where the native asset is unavailable.
+  # Tests that load the bundled PDFium native library. They need native assets
+  # enabled so the library is downloaded for the test host — see "Running the
+  # tests" in README.md. Exclude with `flutter test --exclude-tags pdfium`
+  # where it cannot be made available.
   pdfium:

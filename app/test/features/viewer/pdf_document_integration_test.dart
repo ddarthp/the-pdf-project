@@ -1,12 +1,12 @@
 @Tags(['pdfium'])
 library;
 
-import 'dart:io';
-
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pdfrx/pdfrx.dart';
 import 'package:the_pdf_project/features/viewer/logic/pdfrx_layout_adapter.dart';
 import 'package:the_pdf_project/features/viewer/model/reading_mode.dart';
+
+import '../../support/pdfium_test_support.dart';
 
 /// End-to-end check that the PDFium engine is wired up: open a real PDF from
 /// disk, read its structure and pull text out of it — the same path the viewer
@@ -20,15 +20,7 @@ void main() {
   const encryptedFixture = 'test/fixtures/encrypted.pdf';
   const encryptedPassword = 'letmein';
 
-  setUpAll(() async {
-    TestWidgetsFlutterBinding.ensureInitialized();
-    // path_provider has no implementation under `flutter test`, so point
-    // PDFium's cache at a temp directory before initialising it.
-    Pdfrx.cacheDirectoryPath ??= Directory.systemTemp
-        .createTempSync('pdfrx_test_cache')
-        .path;
-    await pdfrxFlutterInitialize();
-  });
+  setUpAll(initializePdfiumForTests);
 
   test('opens a document and reports its pages', () async {
     final document = await PdfDocument.openFile(fixture);

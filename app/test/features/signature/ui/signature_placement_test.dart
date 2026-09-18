@@ -54,6 +54,7 @@ class _FakeImagePicker extends SignatureImagePicker {
 
 void main() {
   setUpAll(initializePdfiumForTests);
+  setUpAll(silenceIncomingDocuments);
 
   late InMemoryAnnotationStore store;
 

@@ -45,6 +45,7 @@ void main() {
 
   setUpAll(() async {
     await initializePdfiumForTests();
+    silenceIncomingDocuments();
     sampleFixtureBytes = await File(sampleFixture).length();
   });
 

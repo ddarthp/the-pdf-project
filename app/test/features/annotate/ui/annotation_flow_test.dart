@@ -29,6 +29,7 @@ class _FixturePdfPicker extends PdfPicker {
 
 void main() {
   setUpAll(initializePdfiumForTests);
+  setUpAll(silenceIncomingDocuments);
 
   late InMemoryAnnotationStore store;
   late RecordingExporter exporter;
